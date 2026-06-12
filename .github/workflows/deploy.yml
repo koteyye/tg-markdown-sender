@@ -1,0 +1,122 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-publisher-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build Linux binary
+        env:
+          GOARCH: ${{ vars.VDS_GOARCH }}
+        run: bash scripts/build-linux.sh
+
+      - name: Configure SSH
+        env:
+          VDS_HOST: ${{ secrets.VDS_HOST }}
+          VDS_PORT: ${{ secrets.VDS_PORT }}
+          VDS_USER: ${{ secrets.VDS_USER }}
+          VDS_SSH_PRIVATE_KEY: ${{ secrets.VDS_SSH_PRIVATE_KEY }}
+          VDS_KNOWN_HOSTS: ${{ secrets.VDS_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$VDS_HOST"
+          test -n "$VDS_PORT"
+          test -n "$VDS_USER"
+          test -n "$VDS_SSH_PRIVATE_KEY"
+          test -n "$VDS_KNOWN_HOSTS"
+
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "$VDS_SSH_PRIVATE_KEY" > ~/.ssh/telegram-publisher-deploy
+          chmod 0600 ~/.ssh/telegram-publisher-deploy
+          printf '%s\n' "$VDS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0644 ~/.ssh/known_hosts
+
+          cat > ~/.ssh/config <<EOF
+          Host telegram-publisher-vds
+            HostName $VDS_HOST
+            Port $VDS_PORT
+            User $VDS_USER
+            IdentityFile ~/.ssh/telegram-publisher-deploy
+            IdentitiesOnly yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 0600 ~/.ssh/config
+
+      - name: Upload artifact to VDS
+        run: |
+          set -Eeuo pipefail
+          scp dist/telegram-publisher telegram-publisher-vds:/opt/telegram-publisher/telegram-publisher.new
+          scp dist/telegram-publisher.sha256 telegram-publisher-vds:/opt/telegram-publisher/telegram-publisher.sha256
+
+      - name: Deploy atomically
+        run: |
+          set -Eeuo pipefail
+          ssh telegram-publisher-vds 'bash -s' <<'REMOTE'
+          set -Eeuo pipefail
+
+          cd /opt/telegram-publisher
+
+          expected_sha="$(awk '{print $1}' telegram-publisher.sha256)"
+          actual_sha="$(sha256sum telegram-publisher.new | awk '{print $1}')"
+          if [[ "$expected_sha" != "$actual_sha" ]]; then
+            echo "Checksum mismatch" >&2
+            exit 1
+          fi
+
+          chmod 0755 telegram-publisher.new
+
+          if [[ -f telegram-publisher ]]; then
+            cp -p telegram-publisher telegram-publisher.previous
+          fi
+
+          mv telegram-publisher.new telegram-publisher
+
+          sudo systemctl restart telegram-publisher.service
+          sleep 5
+
+          if ! sudo systemctl is-active --quiet telegram-publisher.service; then
+            sudo systemctl status telegram-publisher.service --no-pager || true
+            sudo journalctl -u telegram-publisher.service -n 100 --no-pager || true
+
+            if [[ -f telegram-publisher.previous ]]; then
+              cp -p telegram-publisher.previous telegram-publisher
+              sudo systemctl restart telegram-publisher.service || true
+            fi
+
+            exit 1
+          fi
+
+          rm -f telegram-publisher.sha256 telegram-publisher.new
+          REMOTE

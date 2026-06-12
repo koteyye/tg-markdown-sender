@@ -1,0 +1,13 @@
+.env
+env
+dist/
+.gocache/
+*.new
+*.previous
+*.sha256
+*_key
+*_key.pub
+github-actions-telegram-publisher
+github-actions-telegram-publisher.pub
+telegram-publisher-deploy
+telegram-publisher-deploy.pub
