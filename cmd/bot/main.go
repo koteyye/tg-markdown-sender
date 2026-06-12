@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -77,4 +77,17 @@ func main() {
 	}
 
 	logger.Info("bot stopped")
+}
+
+func logLevel() slog.Level {
+	switch os.Getenv("LOG_LEVEL") {
+	case "debug", "DEBUG":
+		return slog.LevelDebug
+	case "warn", "WARN":
+		return slog.LevelWarn
+	case "error", "ERROR":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

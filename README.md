@@ -26,6 +26,7 @@ cp .env.example .env
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_OWNER_ID=
 TELEGRAM_CHANNEL_ID=
+LOG_LEVEL=info
 ```
 
 Запустите:
@@ -236,6 +237,42 @@ go vet ./...
 ```
 
 ## Частые Проблемы
+
+### Custom emoji превращаются в обычные emoji
+
+Бот восстанавливает входящий `custom_emoji` в Rich Markdown вида:
+
+```markdown
+![😁](tg://emoji?id=...)
+```
+
+Чтобы временно проверить, приходит ли от Telegram `custom_emoji_id`, включите debug-логи:
+
+```bash
+sudo sed -i 's/^LOG_LEVEL=.*/LOG_LEVEL=debug/' /etc/telegram-publisher/env
+sudo systemctl restart telegram-publisher.service
+sudo journalctl -u telegram-publisher.service -f
+```
+
+В логах будет только тип entity и `custom_emoji_id`, без полного текста поста. Если ID есть, но в канале всё равно отображается обычный emoji, это ограничение Telegram для отправки кастомных emoji ботом в канал.
+
+### Bad Request: chat not found при публикации
+
+Предпросмотр в личном чате может работать, а публикация падать с `chat not found`, если Telegram не видит целевой канал из `TELEGRAM_CHANNEL_ID`.
+
+Проверьте:
+
+- username канала указан точно, включая `@`;
+- для приватного канала указан числовой ID вида `-100...`;
+- бот добавлен в канал администратором;
+- у бота есть право публиковать сообщения;
+- на VDS обновлён `/etc/telegram-publisher/env`, а сервис перезапущен.
+
+После изменения env:
+
+```bash
+sudo systemctl restart telegram-publisher.service
+```
 
 Если бот пишет `getMe network error` или `getUpdates network error`, сервер не может установить HTTPS-соединение с `api.telegram.org`. Проверьте сетевой доступ с VDS:
 

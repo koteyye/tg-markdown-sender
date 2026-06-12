@@ -161,7 +161,7 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 	if _, err := b.tg.SendRichMessage(ctx, b.cfg.ChannelID, draft.Markdown, nil); err != nil {
 		_ = b.tg.AnswerCallbackQuery(ctx, callback.ID, "Не удалось опубликовать.", true)
 		if callback.Message != nil {
-			_, notifyErr := b.tg.SendMessage(ctx, callback.Message.Chat.ID, markdownErrorText(err), nil)
+			_, notifyErr := b.tg.SendMessage(ctx, callback.Message.Chat.ID, publishErrorText(err), nil)
 			if notifyErr != nil {
 				return fmt.Errorf("publish failed: %w; notify failed: %v", err, notifyErr)
 			}
@@ -226,4 +226,16 @@ func markdownErrorText(err error) string {
 		return "Telegram не смог обработать Markdown: " + apiErr.Description + "\n\nПришли исправленный вариант новым сообщением."
 	}
 	return "Не удалось отправить сообщение в Telegram. Пришли исправленный вариант новым сообщением или повтори попытку позже."
+}
+
+func publishErrorText(err error) string {
+	var apiErr *telegram.APIError
+	if errors.As(err, &apiErr) && apiErr.Description != "" {
+		description := apiErr.Description
+		if strings.Contains(strings.ToLower(description), "chat not found") {
+			return "Не удалось опубликовать: Telegram не нашёл целевой канал.\n\nПроверь TELEGRAM_CHANNEL_ID, username канала и что бот добавлен администратором канала с правом публикации."
+		}
+		return "Не удалось опубликовать: " + description
+	}
+	return "Не удалось опубликовать из-за сетевой ошибки Telegram. Повтори попытку позже."
 }
