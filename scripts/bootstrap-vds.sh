@@ -77,7 +77,7 @@ if [[ -n "${DEPLOY_PUBLIC_KEY:-}" ]] && ! grep -Fq "$DEPLOY_PUBLIC_KEY" "$author
   printf 'no-agent-forwarding,no-port-forwarding,no-X11-forwarding,no-pty %s\n' "$DEPLOY_PUBLIC_KEY" >> "$authorized_keys"
 fi
 
-"$REPO_ROOT/scripts/install-service.sh"
+bash "$REPO_ROOT/scripts/install-service.sh"
 
 echo "Bootstrap completed."
 echo "Install path: $APP_DIR/$APP_NAME"
