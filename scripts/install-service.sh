@@ -18,10 +18,12 @@ SYSTEMCTL="$(command -v systemctl)"
 JOURNALCTL="$(command -v journalctl)"
 VISUDO="$(command -v visudo)"
 
-tmp_service="$(mktemp)"
+tmp_dir="$(mktemp -d)"
+tmp_service="$tmp_dir/$SERVICE_NAME"
 tmp_sudoers="$(mktemp)"
 cleanup() {
-  rm -f "$tmp_service" "$tmp_sudoers"
+  rm -rf "$tmp_dir"
+  rm -f "$tmp_sudoers"
 }
 trap cleanup EXIT
 
