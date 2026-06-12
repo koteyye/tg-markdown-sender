@@ -17,6 +17,7 @@ const pollTimeoutSeconds = 50
 type TelegramClient interface {
 	GetUpdates(ctx context.Context, offset int64, timeout int) ([]telegram.Update, error)
 	SendRichMessage(ctx context.Context, chatID any, markdown string, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
+	SendPhoto(ctx context.Context, chatID any, photoFileID, caption string, captionEntities []telegram.MessageEntity, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
 	SendMessage(ctx context.Context, chatID any, text string, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
 	AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string, showAlert bool) error
 }
@@ -91,9 +92,13 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 		return err
 	}
 
+	if len(msg.Photo) > 0 {
+		return b.handlePhotoMessage(ctx, chatID, msg)
+	}
+
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
-		_, err := b.tg.SendMessage(ctx, chatID, "Пришли мне текстовый пост в формате Markdown.", nil)
+		_, err := b.tg.SendMessage(ctx, chatID, "Пришли мне текстовый пост в формате Markdown или фото с подписью.", nil)
 		return err
 	}
 
@@ -117,6 +122,34 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 		_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
 		if notifyErr != nil {
 			return fmt.Errorf("preview failed: %w; notify failed: %v", err, notifyErr)
+		}
+		return nil
+	}
+
+	return nil
+}
+
+func (b *Bot) handlePhotoMessage(ctx context.Context, chatID int64, msg *telegram.Message) error {
+	photo, ok := largestPhoto(msg.Photo)
+	if !ok {
+		_, err := b.tg.SendMessage(ctx, chatID, "Не удалось прочитать фото. Попробуй отправить изображение ещё раз.", nil)
+		return err
+	}
+
+	if len(msg.CaptionEntities) > 0 {
+		b.logger.Debug("incoming photo caption entities", "entities", entityDebugAttrs(msg.CaptionEntities))
+	}
+
+	draft, err := b.store.CreatePhoto(photo.FileID, msg.Caption, msg.CaptionEntities)
+	if err != nil {
+		return fmt.Errorf("create photo draft: %w", err)
+	}
+
+	_, err = b.tg.SendPhoto(ctx, chatID, draft.PhotoFileID, draft.Caption, draft.CaptionEntities, previewKeyboard(draft.ID))
+	if err != nil {
+		_, notifyErr := b.tg.SendMessage(ctx, chatID, "Не удалось отправить предпросмотр фото: "+telegramErrorDescription(err), nil)
+		if notifyErr != nil {
+			return fmt.Errorf("photo preview failed: %w; notify failed: %v", err, notifyErr)
 		}
 		return nil
 	}
@@ -158,7 +191,7 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 		return b.tg.AnswerCallbackQuery(ctx, callback.ID, "Пост уже опубликован.", true)
 	}
 
-	if _, err := b.tg.SendRichMessage(ctx, b.cfg.ChannelID, draft.Markdown, nil); err != nil {
+	if err := b.publishDraftContent(ctx, draft); err != nil {
 		_ = b.tg.AnswerCallbackQuery(ctx, callback.ID, "Не удалось опубликовать.", true)
 		if callback.Message != nil {
 			_, notifyErr := b.tg.SendMessage(ctx, callback.Message.Chat.ID, publishErrorText(err), nil)
@@ -185,6 +218,16 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 		return err
 	}
 	return nil
+}
+
+func (b *Bot) publishDraftContent(ctx context.Context, draft drafts.Draft) error {
+	if draft.PhotoFileID != "" {
+		_, err := b.tg.SendPhoto(ctx, b.cfg.ChannelID, draft.PhotoFileID, draft.Caption, draft.CaptionEntities, nil)
+		return err
+	}
+
+	_, err := b.tg.SendRichMessage(ctx, b.cfg.ChannelID, draft.Markdown, nil)
+	return err
 }
 
 func (b *Bot) cancelDraft(ctx context.Context, callback *telegram.CallbackQuery, draftID string) error {
@@ -229,13 +272,45 @@ func markdownErrorText(err error) string {
 }
 
 func publishErrorText(err error) string {
+	description := telegramErrorDescription(err)
+	if description == "" {
+		return "Не удалось опубликовать из-за сетевой ошибки Telegram. Повтори попытку позже."
+	}
+	if strings.Contains(strings.ToLower(description), "chat not found") {
+		return "Не удалось опубликовать: Telegram не нашёл целевой канал.\n\nПроверь TELEGRAM_CHANNEL_ID, username канала и что бот добавлен администратором канала с правом публикации."
+	}
+	return "Не удалось опубликовать: " + description
+}
+
+func telegramErrorDescription(err error) string {
 	var apiErr *telegram.APIError
 	if errors.As(err, &apiErr) && apiErr.Description != "" {
-		description := apiErr.Description
-		if strings.Contains(strings.ToLower(description), "chat not found") {
-			return "Не удалось опубликовать: Telegram не нашёл целевой канал.\n\nПроверь TELEGRAM_CHANNEL_ID, username канала и что бот добавлен администратором канала с правом публикации."
-		}
-		return "Не удалось опубликовать: " + description
+		return apiErr.Description
 	}
-	return "Не удалось опубликовать из-за сетевой ошибки Telegram. Повтори попытку позже."
+	return ""
+}
+
+func largestPhoto(photos []telegram.PhotoSize) (telegram.PhotoSize, bool) {
+	if len(photos) == 0 {
+		return telegram.PhotoSize{}, false
+	}
+
+	best := photos[0]
+	bestScore := photoScore(best)
+	for _, photo := range photos[1:] {
+		score := photoScore(photo)
+		if score > bestScore {
+			best = photo
+			bestScore = score
+		}
+	}
+
+	return best, best.FileID != ""
+}
+
+func photoScore(photo telegram.PhotoSize) int {
+	if photo.FileSize > 0 {
+		return photo.FileSize
+	}
+	return photo.Width * photo.Height
 }

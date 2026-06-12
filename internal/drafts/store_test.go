@@ -3,6 +3,8 @@ package drafts
 import (
 	"errors"
 	"testing"
+
+	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
 func TestMemoryStoreCreateDraft(t *testing.T) {
@@ -46,5 +48,24 @@ func TestMemoryStoreMarkPublishedPreventsDuplicates(t *testing.T) {
 	_, err = store.MarkPublished(draft.ID)
 	if !errors.Is(err, ErrAlreadyPublished) {
 		t.Fatalf("second MarkPublished must return ErrAlreadyPublished, got %v", err)
+	}
+}
+
+func TestMemoryStoreCreatePhotoDraft(t *testing.T) {
+	store := NewMemoryStore()
+	entities := []telegram.MessageEntity{{Type: "bold", Offset: 0, Length: 5}}
+
+	draft, err := store.CreatePhoto("photo-file-id", "hello", entities)
+	if err != nil {
+		t.Fatalf("CreatePhoto returned error: %v", err)
+	}
+	if draft.PhotoFileID != "photo-file-id" {
+		t.Fatalf("unexpected photo file id: %q", draft.PhotoFileID)
+	}
+	if draft.Caption != "hello" {
+		t.Fatalf("unexpected caption: %q", draft.Caption)
+	}
+	if len(draft.CaptionEntities) != 1 || draft.CaptionEntities[0].Type != "bold" {
+		t.Fatalf("caption entities were not stored: %#v", draft.CaptionEntities)
 	}
 }

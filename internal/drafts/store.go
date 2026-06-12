@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
 var (
@@ -14,15 +16,19 @@ var (
 )
 
 type Draft struct {
-	ID          string
-	Markdown    string
-	Published   bool
-	CreatedAt   time.Time
-	PublishedAt *time.Time
+	ID              string
+	Markdown        string
+	PhotoFileID     string
+	Caption         string
+	CaptionEntities []telegram.MessageEntity
+	Published       bool
+	CreatedAt       time.Time
+	PublishedAt     *time.Time
 }
 
 type Store interface {
 	Create(markdown string) (Draft, error)
+	CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error)
 	Get(id string) (Draft, bool)
 	Delete(id string)
 	MarkPublished(id string) (Draft, error)
@@ -38,16 +44,25 @@ func NewMemoryStore() *MemoryStore {
 }
 
 func (s *MemoryStore) Create(markdown string) (Draft, error) {
+	return s.create(Draft{Markdown: markdown})
+}
+
+func (s *MemoryStore) CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error) {
+	return s.create(Draft{
+		PhotoFileID:     photoFileID,
+		Caption:         caption,
+		CaptionEntities: append([]telegram.MessageEntity(nil), captionEntities...),
+	})
+}
+
+func (s *MemoryStore) create(draft Draft) (Draft, error) {
 	id, err := randomID()
 	if err != nil {
 		return Draft{}, err
 	}
 
-	draft := Draft{
-		ID:        id,
-		Markdown:  markdown,
-		CreatedAt: time.Now().UTC(),
-	}
+	draft.ID = id
+	draft.CreatedAt = time.Now().UTC()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

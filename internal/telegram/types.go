@@ -7,11 +7,14 @@ type Update struct {
 }
 
 type Message struct {
-	MessageID int64           `json:"message_id"`
-	From      *User           `json:"from,omitempty"`
-	Chat      Chat            `json:"chat"`
-	Text      string          `json:"text,omitempty"`
-	Entities  []MessageEntity `json:"entities,omitempty"`
+	MessageID       int64           `json:"message_id"`
+	From            *User           `json:"from,omitempty"`
+	Chat            Chat            `json:"chat"`
+	Text            string          `json:"text,omitempty"`
+	Entities        []MessageEntity `json:"entities,omitempty"`
+	Caption         string          `json:"caption,omitempty"`
+	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
+	Photo           []PhotoSize     `json:"photo,omitempty"`
 }
 
 type MessageEntity struct {
@@ -20,6 +23,14 @@ type MessageEntity struct {
 	Length        int    `json:"length"`
 	Language      string `json:"language,omitempty"`
 	CustomEmojiID string `json:"custom_emoji_id,omitempty"`
+}
+
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id,omitempty"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int    `json:"file_size,omitempty"`
 }
 
 type User struct {
@@ -75,6 +86,14 @@ type SendMessageRequest struct {
 	ChatID      any          `json:"chat_id"`
 	Text        string       `json:"text"`
 	ReplyMarkup *ReplyMarkup `json:"reply_markup,omitempty"`
+}
+
+type SendPhotoRequest struct {
+	ChatID          any             `json:"chat_id"`
+	Photo           string          `json:"photo"`
+	Caption         string          `json:"caption,omitempty"`
+	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
+	ReplyMarkup     *ReplyMarkup    `json:"reply_markup,omitempty"`
 }
 
 type AnswerCallbackQueryRequest struct {

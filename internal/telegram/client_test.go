@@ -93,6 +93,52 @@ func TestSendRichMessageAPIError(t *testing.T) {
 	}
 }
 
+func TestSendPhotoSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendPhoto") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req SendPhotoRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Photo != "photo-file-id" {
+			t.Fatalf("unexpected photo: %q", req.Photo)
+		}
+		if req.Caption != "hello" {
+			t.Fatalf("unexpected caption: %q", req.Caption)
+		}
+		if len(req.CaptionEntities) != 1 || req.CaptionEntities[0].Type != "bold" {
+			t.Fatalf("unexpected caption entities: %#v", req.CaptionEntities)
+		}
+		if req.ReplyMarkup == nil {
+			t.Fatal("reply markup must be sent")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":11,"chat":{"id":42,"type":"private"},"caption":"hello"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	msg, err := client.SendPhoto(
+		context.Background(),
+		int64(42),
+		"photo-file-id",
+		"hello",
+		[]MessageEntity{{Type: "bold", Offset: 0, Length: 5}},
+		&ReplyMarkup{InlineKeyboard: [][]InlineKeyboardButton{{{Text: "ok", CallbackData: "ok"}}}},
+	)
+	if err != nil {
+		t.Fatalf("SendPhoto returned error: %v", err)
+	}
+	if msg.MessageID != 11 {
+		t.Fatalf("unexpected message id: %d", msg.MessageID)
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

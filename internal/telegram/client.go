@@ -99,6 +99,21 @@ func (c *Client) SendMessage(ctx context.Context, chatID any, text string, reply
 	return &message, nil
 }
 
+func (c *Client) SendPhoto(ctx context.Context, chatID any, photoFileID, caption string, captionEntities []MessageEntity, replyMarkup *ReplyMarkup) (*Message, error) {
+	var message Message
+	body := SendPhotoRequest{
+		ChatID:          chatID,
+		Photo:           photoFileID,
+		Caption:         caption,
+		CaptionEntities: captionEntities,
+		ReplyMarkup:     replyMarkup,
+	}
+	if err := c.do(ctx, http.MethodPost, "sendPhoto", nil, body, &message); err != nil {
+		return nil, err
+	}
+	return &message, nil
+}
+
 func (c *Client) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string, showAlert bool) error {
 	body := AnswerCallbackQueryRequest{
 		CallbackQueryID: callbackQueryID,
