@@ -46,6 +46,17 @@ gpasswd -d "$DEPLOY_USER" admin >/dev/null 2>&1 || true
 install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$APP_DIR"
 install -d -m 0755 -o root -g root "$CONFIG_DIR"
 
+if [[ ! -f "$APP_DIR/$APP_NAME" ]]; then
+  tmp_placeholder="$(mktemp)"
+  cat > "$tmp_placeholder" <<'EOF'
+#!/usr/bin/env sh
+echo "telegram-publisher has not been deployed yet" >&2
+exit 1
+EOF
+  install -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$tmp_placeholder" "$APP_DIR/$APP_NAME"
+  rm -f "$tmp_placeholder"
+fi
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
   echo "Creating $CONFIG_FILE. Values are read without echo where appropriate."
   read -rsp "Telegram bot token: " TELEGRAM_BOT_TOKEN
