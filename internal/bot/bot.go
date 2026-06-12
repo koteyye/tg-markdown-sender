@@ -102,7 +102,12 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 		return err
 	}
 
-	draft, err := b.store.Create(msg.Text)
+	if len(msg.Entities) > 0 {
+		b.logger.Debug("incoming message entities", "entities", entityDebugAttrs(msg.Entities))
+	}
+
+	markdown := restoreMarkdownEntities(msg.Text, msg.Entities)
+	draft, err := b.store.Create(markdown)
 	if err != nil {
 		return fmt.Errorf("create draft: %w", err)
 	}

@@ -7,10 +7,19 @@ type Update struct {
 }
 
 type Message struct {
-	MessageID int64  `json:"message_id"`
-	From      *User  `json:"from,omitempty"`
-	Chat      Chat   `json:"chat"`
-	Text      string `json:"text,omitempty"`
+	MessageID int64           `json:"message_id"`
+	From      *User           `json:"from,omitempty"`
+	Chat      Chat            `json:"chat"`
+	Text      string          `json:"text,omitempty"`
+	Entities  []MessageEntity `json:"entities,omitempty"`
+}
+
+type MessageEntity struct {
+	Type          string `json:"type"`
+	Offset        int    `json:"offset"`
+	Length        int    `json:"length"`
+	Language      string `json:"language,omitempty"`
+	CustomEmojiID string `json:"custom_emoji_id,omitempty"`
 }
 
 type User struct {
