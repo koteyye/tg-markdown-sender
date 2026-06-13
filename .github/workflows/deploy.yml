@@ -32,7 +32,7 @@ jobs:
         run: test -z "$(gofmt -l .)"
 
       - name: Lint
-        uses: golangci/golangci-lint-action@55c2c144a45769680bc6329971f4184ad3b28455 # v6.5.2
+        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
         with:
           version: v1.64.8
 
@@ -46,7 +46,7 @@ jobs:
         run: go vet ./...
 
       - name: Vulnerability scan
-        uses: golang/govulncheck-action@b625fbe081560d591624a21bd4a1f4a7f7b5f5c1 # v1.1.0
+        uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
         with:
           go-version-file: go.mod
 
