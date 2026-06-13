@@ -174,6 +174,7 @@ func (c *Client) do(ctx context.Context, httpMethod, apiMethod string, query url
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.HTTPStatus >= 500 && attempt < 3 {
 			lastErr = err
+			_ = resp.Body.Close()
 			sleepBeforeRetry(ctx, attempt)
 			continue
 		}

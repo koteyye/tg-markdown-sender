@@ -51,14 +51,13 @@ func Load() (Config, error) {
 }
 
 func loadDotEnv(path string) error {
-	file, err := os.Open(path)
+	file, err := os.Open(path) //nolint:gosec // .env path is hardcoded; Load is not exposed to user input.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	//nolint:gosec // .env path is hardcoded; Load is not exposed to user input.
 	defer func() {
 		_ = file.Close()
 	}()

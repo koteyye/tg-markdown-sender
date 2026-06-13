@@ -109,6 +109,10 @@ linters:
       min-occurrences: 4
     gocyclo:
       min-complexity: 13
+    gosec:
+      config:
+        G101:
+          pattern: "(?i)private_key|pass|pwd|secret|token|bearer|api_key|apikey"
     nolintlint:
       require-explanation: true
       require-specific: true

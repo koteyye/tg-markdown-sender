@@ -67,15 +67,16 @@ func main() {
 		stopSignals()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 
 		select {
 		case err := <-errCh:
+			cancel()
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("bot stopped with error during shutdown", "error", err)
 				exitCode = 1
 			}
 		case <-shutdownCtx.Done():
+			cancel()
 			logger.Error("graceful shutdown timed out", "timeout", "10s")
 			exitCode = 1
 		}
@@ -113,7 +114,7 @@ func startPprof(logger *slog.Logger) {
 
 	go func() {
 		logger.Info("pprof server started", "addr", addr)
-		//nolint:gosec // pprof endpoint intentionally enabled only via env var on a controlled address.
+		//nolint:gosec // pprof intentionally enabled only via env var on a controlled address.
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("pprof server failed", "error", err)
 		}

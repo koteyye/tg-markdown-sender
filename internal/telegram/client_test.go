@@ -163,7 +163,7 @@ func TestAnswerCallbackQuerySuccess(t *testing.T) {
 func TestSendRichMessageAPIError(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: can't parse markdown"}`))
@@ -193,7 +193,7 @@ func TestDoRetriesOnServerError(t *testing.T) {
 	t.Parallel()
 
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if requests.Add(1) < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"ok":false,"error_code":500,"description":"internal error"}`))
