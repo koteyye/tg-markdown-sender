@@ -94,7 +94,7 @@ linters:
       - third_party$
       - testutils$
       - examples$
-      - .agents/
+      - .agents
 
   settings:
     dupl:
@@ -117,11 +117,6 @@ formatters:
   enable:
     - gofmt
     - gofumpt
-  disable:
-    - gci
-    - goimports
-    - golines
-    - swaggo
   settings:
     gofumpt:
       extra-rules: true
@@ -131,4 +126,4 @@ formatters:
       - third_party$
       - builtin$
       - examples$
-      - .agents/
+      - .agents
