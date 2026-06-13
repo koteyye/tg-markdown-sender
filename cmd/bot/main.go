@@ -83,6 +83,7 @@ func main() {
 	}
 
 	logger.Info("bot stopped")
+	//nolint:gocritic // stopSignals is a sync.OnceFunc; single os.Exit is intentional at program end.
 	os.Exit(exitCode)
 }
 
@@ -114,7 +115,6 @@ func startPprof(logger *slog.Logger) {
 
 	go func() {
 		logger.Info("pprof server started", "addr", addr)
-		//nolint:gosec // pprof intentionally enabled only via env var on a controlled address.
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("pprof server failed", "error", err)
 		}
