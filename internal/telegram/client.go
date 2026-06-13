@@ -133,7 +133,7 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text 
 	return c.do(ctx, http.MethodPost, "answerCallbackQuery", nil, body, nil)
 }
 
-func (c *Client) do(ctx context.Context, httpMethod, apiMethod string, query url.Values, body any, result any) error {
+func (c *Client) do(ctx context.Context, httpMethod, apiMethod string, query url.Values, body, result any) error {
 	var encodedBody []byte
 	var err error
 	if body != nil {
