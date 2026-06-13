@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,6 +43,8 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("telegram api startup check passed", "bot_id", botInfo.ID, "bot_username", botInfo.Username)
+
+	startPprof(logger)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -80,14 +84,35 @@ func main() {
 }
 
 func logLevel() slog.Level {
-	switch os.Getenv("LOG_LEVEL") {
-	case "debug", "DEBUG":
-		return slog.LevelDebug
-	case "warn", "WARN":
-		return slog.LevelWarn
-	case "error", "ERROR":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
 	}
+	return level
+}
+
+func startPprof(logger *slog.Logger) {
+	addr := strings.TrimSpace(os.Getenv("PPROF_ADDR"))
+	if addr == "" {
+		return
+	}
+
+	server := &http.Server{
+		Addr:         addr,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		Handler:      http.DefaultServeMux,
+	}
+
+	go func() {
+		logger.Info("pprof server started", "addr", addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof server failed", "error", err)
+		}
+	}()
 }

@@ -3,15 +3,19 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 func TestSendRichMessageSuccess(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendRichMessage") {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -42,6 +46,8 @@ func TestSendRichMessageSuccess(t *testing.T) {
 }
 
 func TestGetMeSuccess(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/botsecret/getMe") {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -66,7 +72,99 @@ func TestGetMeSuccess(t *testing.T) {
 	}
 }
 
+func TestGetUpdatesSuccess(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/botsecret/getUpdates") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("offset") != "7" {
+			t.Fatalf("unexpected offset: %q", r.URL.Query().Get("offset"))
+		}
+		if r.URL.Query().Get("timeout") != "50" {
+			t.Fatalf("unexpected timeout: %q", r.URL.Query().Get("timeout"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":7,"message":{"message_id":1,"chat":{"id":42}}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	updates, err := client.GetUpdates(context.Background(), 7, 50)
+	if err != nil {
+		t.Fatalf("GetUpdates returned error: %v", err)
+	}
+	if len(updates) != 1 || updates[0].UpdateID != 7 {
+		t.Fatalf("unexpected updates: %+v", updates)
+	}
+}
+
+func TestSendMessageSuccess(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendMessage") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Text != "hello" {
+			t.Fatalf("unexpected text: %q", req.Text)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":12,"chat":{"id":42,"type":"private"}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	msg, err := client.SendMessage(context.Background(), int64(42), "hello", nil)
+	if err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	if msg.MessageID != 12 {
+		t.Fatalf("unexpected message id: %d", msg.MessageID)
+	}
+}
+
+func TestAnswerCallbackQuerySuccess(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/botsecret/answerCallbackQuery") {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req AnswerCallbackQueryRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.CallbackQueryID != "callback-id" {
+			t.Fatalf("unexpected callback query id: %q", req.CallbackQueryID)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	if err := client.AnswerCallbackQuery(context.Background(), "callback-id", "ok", false); err != nil {
+		t.Fatalf("AnswerCallbackQuery returned error: %v", err)
+	}
+}
+
 func TestSendRichMessageAPIError(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -81,8 +179,8 @@ func TestSendRichMessageAPIError(t *testing.T) {
 		t.Fatal("expected API error")
 	}
 
-	apiErr, ok := err.(*APIError)
-	if !ok {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected APIError, got %T", err)
 	}
 	if apiErr.HTTPStatus != http.StatusBadRequest {
@@ -93,7 +191,37 @@ func TestSendRichMessageAPIError(t *testing.T) {
 	}
 }
 
+func TestDoRetriesOnServerError(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok":false,"error_code":500,"description":"internal error"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":13,"chat":{"id":42,"type":"private"}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	msg, err := client.SendMessage(context.Background(), int64(42), "hello", nil)
+	if err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	if msg.MessageID != 13 {
+		t.Fatalf("unexpected message id: %d", msg.MessageID)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("expected 3 requests, got %d", requests.Load())
+	}
+}
+
 func TestSendPhotoSuccess(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendPhoto") {
 			t.Fatalf("unexpected path: %s", r.URL.Path)

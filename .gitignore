@@ -1,5 +1,6 @@
 .env
 env
+.agents/
 dist/
 .gocache/
 *.new
@@ -11,3 +12,4 @@ github-actions-telegram-publisher
 github-actions-telegram-publisher.pub
 telegram-publisher-deploy
 telegram-publisher-deploy.pub
+test.md

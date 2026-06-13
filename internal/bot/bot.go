@@ -159,7 +159,7 @@ func (b *Bot) handlePhotoMessage(ctx context.Context, chatID int64, msg *telegra
 
 func (b *Bot) handleCallback(ctx context.Context, callback *telegram.CallbackQuery) error {
 	if !IsAllowedUser(callback.From.ID, b.cfg.OwnerID) {
-		_ = b.tg.AnswerCallbackQuery(ctx, callback.ID, "Доступ запрещён.", true)
+		b.answerCallback(ctx, callback, "Доступ запрещён.", true)
 		if callback.Message != nil {
 			_, err := b.tg.SendMessage(ctx, callback.Message.Chat.ID, "Доступ запрещён.", nil)
 			return err
@@ -169,7 +169,8 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telegram.CallbackQue
 
 	action, draftID, ok := parseCallbackData(callback.Data)
 	if !ok {
-		return b.tg.AnswerCallbackQuery(ctx, callback.ID, "Неизвестное действие.", true)
+		b.answerCallback(ctx, callback, "Неизвестное действие.", true)
+		return nil
 	}
 
 	switch action {
@@ -178,7 +179,8 @@ func (b *Bot) handleCallback(ctx context.Context, callback *telegram.CallbackQue
 	case "cancel":
 		return b.cancelDraft(ctx, callback, draftID)
 	default:
-		return b.tg.AnswerCallbackQuery(ctx, callback.ID, "Неизвестное действие.", true)
+		b.answerCallback(ctx, callback, "Неизвестное действие.", true)
+		return nil
 	}
 }
 
@@ -192,7 +194,7 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 	}
 
 	if err := b.publishDraftContent(ctx, draft); err != nil {
-		_ = b.tg.AnswerCallbackQuery(ctx, callback.ID, "Не удалось опубликовать.", true)
+		b.answerCallback(ctx, callback, "Не удалось опубликовать.", true)
 		if callback.Message != nil {
 			_, notifyErr := b.tg.SendMessage(ctx, callback.Message.Chat.ID, publishErrorText(err), nil)
 			if notifyErr != nil {
@@ -204,7 +206,8 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 
 	_, err := b.store.MarkPublished(draftID)
 	if errors.Is(err, drafts.ErrAlreadyPublished) {
-		return b.tg.AnswerCallbackQuery(ctx, callback.ID, "Пост уже опубликован.", true)
+		b.answerCallback(ctx, callback, "Пост уже опубликован.", true)
+		return nil
 	}
 	if err != nil {
 		return err
@@ -242,6 +245,12 @@ func (b *Bot) cancelDraft(ctx context.Context, callback *telegram.CallbackQuery,
 	return nil
 }
 
+func (b *Bot) answerCallback(ctx context.Context, callback *telegram.CallbackQuery, text string, showAlert bool) {
+	if err := b.tg.AnswerCallbackQuery(ctx, callback.ID, text, showAlert); err != nil {
+		b.logger.Error("answer callback query failed", "error", err)
+	}
+}
+
 func IsAllowedUser(userID, ownerID int64) bool {
 	return userID == ownerID
 }
@@ -264,8 +273,7 @@ func parseCallbackData(data string) (action, draftID string, ok bool) {
 }
 
 func markdownErrorText(err error) string {
-	var apiErr *telegram.APIError
-	if errors.As(err, &apiErr) && apiErr.Description != "" {
+	if apiErr, ok := errors.AsType[*telegram.APIError](err); ok && apiErr.Description != "" {
 		return "Telegram не смог обработать Markdown: " + apiErr.Description + "\n\nПришли исправленный вариант новым сообщением."
 	}
 	return "Не удалось отправить сообщение в Telegram. Пришли исправленный вариант новым сообщением или повтори попытку позже."
@@ -283,8 +291,7 @@ func publishErrorText(err error) string {
 }
 
 func telegramErrorDescription(err error) string {
-	var apiErr *telegram.APIError
-	if errors.As(err, &apiErr) && apiErr.Description != "" {
+	if apiErr, ok := errors.AsType[*telegram.APIError](err); ok && apiErr.Description != "" {
 		return apiErr.Description
 	}
 	return ""

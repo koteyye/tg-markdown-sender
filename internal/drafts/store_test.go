@@ -8,6 +8,8 @@ import (
 )
 
 func TestMemoryStoreCreateDraft(t *testing.T) {
+	t.Parallel()
+
 	store := NewMemoryStore()
 
 	draft, err := store.Create("# Title")
@@ -30,28 +32,68 @@ func TestMemoryStoreCreateDraft(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreMarkPublishedPreventsDuplicates(t *testing.T) {
-	store := NewMemoryStore()
-	draft, err := store.Create("hello")
-	if err != nil {
-		t.Fatalf("Create returned error: %v", err)
+func TestMemoryStoreMarkPublished(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		prepare func(*MemoryStore) string
+		wantErr error
+	}{
+		{
+			name: "marks draft published",
+			prepare: func(store *MemoryStore) string {
+				draft, err := store.Create("hello")
+				if err != nil {
+					t.Fatalf("Create returned error: %v", err)
+				}
+				return draft.ID
+			},
+			wantErr: nil,
+		},
+		{
+			name: "returns ErrAlreadyPublished on second call",
+			prepare: func(store *MemoryStore) string {
+				draft, err := store.Create("hello")
+				if err != nil {
+					t.Fatalf("Create returned error: %v", err)
+				}
+				if _, err := store.MarkPublished(draft.ID); err != nil {
+					t.Fatalf("first MarkPublished returned error: %v", err)
+				}
+				return draft.ID
+			},
+			wantErr: ErrAlreadyPublished,
+		},
+		{
+			name: "returns ErrNotFound for missing draft",
+			prepare: func(*MemoryStore) string {
+				return "missing-id"
+			},
+			wantErr: ErrNotFound,
+		},
 	}
 
-	published, err := store.MarkPublished(draft.ID)
-	if err != nil {
-		t.Fatalf("first MarkPublished returned error: %v", err)
-	}
-	if !published.Published {
-		t.Fatal("draft must be marked as published")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := NewMemoryStore()
+			id := tt.prepare(store)
 
-	_, err = store.MarkPublished(draft.ID)
-	if !errors.Is(err, ErrAlreadyPublished) {
-		t.Fatalf("second MarkPublished must return ErrAlreadyPublished, got %v", err)
+			published, err := store.MarkPublished(id)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("MarkPublished error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr == nil && !published.Published {
+				t.Fatal("draft must be marked as published")
+			}
+		})
 	}
 }
 
 func TestMemoryStoreCreatePhotoDraft(t *testing.T) {
+	t.Parallel()
+
 	store := NewMemoryStore()
 	entities := []telegram.MessageEntity{{Type: "bold", Offset: 0, Length: 5}}
 
@@ -67,5 +109,20 @@ func TestMemoryStoreCreatePhotoDraft(t *testing.T) {
 	}
 	if len(draft.CaptionEntities) != 1 || draft.CaptionEntities[0].Type != "bold" {
 		t.Fatalf("caption entities were not stored: %#v", draft.CaptionEntities)
+	}
+}
+
+func TestMemoryStoreDelete(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryStore()
+	draft, err := store.Create("to delete")
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	store.Delete(draft.ID)
+	if _, ok := store.Get(draft.ID); ok {
+		t.Fatal("draft must be deleted")
 	}
 }

@@ -31,11 +31,24 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@55c2c144a45769680bc6329971f4184ad3b28455 # v6.5.2
+        with:
+          version: v1.64.8
+
       - name: Test
         run: go test ./...
 
+      - name: Test with race detector
+        run: go test -race ./...
+
       - name: Vet
         run: go vet ./...
+
+      - name: Vulnerability scan
+        uses: golang/govulncheck-action@b625fbe081560d591624a21bd4a1f4a7f7b5f5c1 # v1.1.0
+        with:
+          go-version-file: go.mod
 
       - name: Build Linux binary
         env:

@@ -1,3 +1,5 @@
 module github.com/koteyye/tg-markdown-sender
 
-go 1.25
+go 1.26.4
+
+require go.uber.org/goleak v1.3.0
