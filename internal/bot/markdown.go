@@ -31,7 +31,8 @@ func restoreMarkdownEntities(text string, entities []telegram.MessageEntity) str
 			continue
 		}
 
-		insertions = append(insertions,
+		insertions = append(
+			insertions,
 			markdownInsertion{pos: start, text: prefix, order: 0},
 			markdownInsertion{pos: end, text: suffix, order: 1},
 		)

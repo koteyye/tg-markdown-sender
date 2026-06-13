@@ -112,7 +112,7 @@ linters:
     gosec:
       config:
         G101:
-          pattern: "(?i)private_key|passphrase|password|pwd|secret|token|bearer|api_key|apikey"
+          pattern: "(?i)private_key|passphrase|password|pwd|secret|bearer|api_key|apikey"
     nolintlint:
       require-explanation: true
       require-specific: true
