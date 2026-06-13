@@ -7,6 +7,10 @@ import (
 	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
+const (
+	wantFileID = "large"
+)
+
 func TestIsAllowedUser(t *testing.T) {
 	t.Parallel()
 
@@ -83,23 +87,15 @@ func TestLargestPhoto(t *testing.T) {
 		wantOK     bool
 	}{
 		{
-			name: "prefers largest file size",
-			photos: []telegram.PhotoSize{
-				{FileID: "small", Width: 90, Height: 90, FileSize: 100},
-				{FileID: "large", Width: 1280, Height: 720, FileSize: 1000},
-				{FileID: "medium", Width: 640, Height: 480, FileSize: 500},
-			},
-			wantFileID: "large",
+			name:       "prefers largest file size",
+			photos:     []telegram.PhotoSize{{FileID: "small", Width: 90, Height: 90, FileSize: 100}, {FileID: wantFileID, Width: 1280, Height: 720, FileSize: 1000}, {FileID: "medium", Width: 640, Height: 480, FileSize: 500}},
+			wantFileID: wantFileID,
 			wantOK:     true,
 		},
 		{
-			name: "falls back to dimensions",
-			photos: []telegram.PhotoSize{
-				{FileID: "small", Width: 90, Height: 90},
-				{FileID: "large", Width: 1280, Height: 720},
-				{FileID: "medium", Width: 640, Height: 480},
-			},
-			wantFileID: "large",
+			name:       "falls back to dimensions",
+			photos:     []telegram.PhotoSize{{FileID: "small", Width: 90, Height: 90}, {FileID: wantFileID, Width: 1280, Height: 720}, {FileID: "medium", Width: 640, Height: 480}},
+			wantFileID: wantFileID,
 			wantOK:     true,
 		},
 		{

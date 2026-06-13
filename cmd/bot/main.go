@@ -1,3 +1,4 @@
+// Package main запускает Telegram-бота для публикации Rich Markdown постов.
 package main
 
 import (
@@ -5,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,7 +25,7 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Error("configuration error", "error", err)
-		os.Exit(1)
+		return
 	}
 
 	runCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -40,7 +40,7 @@ func main() {
 	cancelStartup()
 	if err != nil {
 		logger.Error("telegram api startup check failed", "method", "getMe", "error", err)
-		os.Exit(1)
+		return
 	}
 	logger.Info("telegram api startup check passed", "bot_id", botInfo.ID, "bot_username", botInfo.Username)
 
@@ -53,13 +53,14 @@ func main() {
 
 	logger.Info("bot started")
 
+	exitCode := 0
 	select {
 	case err := <-errCh:
 		if errors.Is(err, context.Canceled) && runCtx.Err() != nil {
 			logger.Info("shutdown signal received")
 		} else if err != nil {
 			logger.Error("bot stopped with error", "error", err)
-			os.Exit(1)
+			exitCode = 1
 		}
 	case <-runCtx.Done():
 		logger.Info("shutdown signal received")
@@ -72,15 +73,16 @@ func main() {
 		case err := <-errCh:
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("bot stopped with error during shutdown", "error", err)
-				os.Exit(1)
+				exitCode = 1
 			}
 		case <-shutdownCtx.Done():
 			logger.Error("graceful shutdown timed out", "timeout", "10s")
-			os.Exit(1)
+			exitCode = 1
 		}
 	}
 
 	logger.Info("bot stopped")
+	os.Exit(exitCode)
 }
 
 func logLevel() slog.Level {
@@ -111,6 +113,7 @@ func startPprof(logger *slog.Logger) {
 
 	go func() {
 		logger.Info("pprof server started", "addr", addr)
+		//nolint:gosec // pprof endpoint intentionally enabled only via env var on a controlled address.
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("pprof server failed", "error", err)
 		}

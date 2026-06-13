@@ -1,3 +1,4 @@
+// Package telegram реализует HTTP-клиент для Telegram Bot API.
 package telegram
 
 import (
@@ -6,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -17,6 +17,7 @@ import (
 
 const defaultBaseURL = "https://api.telegram.org"
 
+// Client выполняет запросы к Telegram Bot API.
 type Client struct {
 	token      string
 	httpClient *http.Client
@@ -24,20 +25,23 @@ type Client struct {
 	baseURL    string
 }
 
+// Option изменяет настройки Client при создании.
 type Option func(*Client)
 
+// WithBaseURL задаёт альтернативный базовый URL для Telegram API.
 func WithBaseURL(baseURL string) Option {
 	return func(c *Client) {
 		c.baseURL = strings.TrimRight(baseURL, "/")
 	}
 }
 
+// NewClient создаёт новый HTTP-клиент для Telegram Bot API.
 func NewClient(token string, httpClient *http.Client, logger *slog.Logger, opts ...Option) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 	}
 
 	c := &Client{
@@ -52,6 +56,7 @@ func NewClient(token string, httpClient *http.Client, logger *slog.Logger, opts 
 	return c
 }
 
+// GetMe возвращает информацию о текущем боте.
 func (c *Client) GetMe(ctx context.Context) (*BotInfo, error) {
 	var botInfo BotInfo
 	if err := c.do(ctx, http.MethodGet, "getMe", nil, nil, &botInfo); err != nil {
@@ -60,6 +65,7 @@ func (c *Client) GetMe(ctx context.Context) (*BotInfo, error) {
 	return &botInfo, nil
 }
 
+// GetUpdates получает список входящих обновлений из Telegram.
 func (c *Client) GetUpdates(ctx context.Context, offset int64, timeout int) ([]Update, error) {
 	values := url.Values{}
 	if offset > 0 {
@@ -73,6 +79,7 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, timeout int) ([]U
 	return updates, err
 }
 
+// SendRichMessage отправляет форматированное Markdown-сообщение.
 func (c *Client) SendRichMessage(ctx context.Context, chatID any, markdown string, replyMarkup *ReplyMarkup) (*Message, error) {
 	var message Message
 	body := SendRichMessageRequest{
@@ -86,6 +93,7 @@ func (c *Client) SendRichMessage(ctx context.Context, chatID any, markdown strin
 	return &message, nil
 }
 
+// SendMessage отправляет обычное текстовое сообщение.
 func (c *Client) SendMessage(ctx context.Context, chatID any, text string, replyMarkup *ReplyMarkup) (*Message, error) {
 	var message Message
 	body := SendMessageRequest{
@@ -99,6 +107,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID any, text string, reply
 	return &message, nil
 }
 
+// SendPhoto отправляет фото с подписью.
 func (c *Client) SendPhoto(ctx context.Context, chatID any, photoFileID, caption string, captionEntities []MessageEntity, replyMarkup *ReplyMarkup) (*Message, error) {
 	var message Message
 	body := SendPhotoRequest{
@@ -114,6 +123,7 @@ func (c *Client) SendPhoto(ctx context.Context, chatID any, photoFileID, caption
 	return &message, nil
 }
 
+// AnswerCallbackQuery отвечает на callback-запрос inline-кнопки.
 func (c *Client) AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string, showAlert bool) error {
 	body := AnswerCallbackQueryRequest{
 		CallbackQueryID: callbackQueryID,
@@ -179,7 +189,9 @@ func (c *Client) networkError(apiMethod string, err error) error {
 }
 
 func (c *Client) decodeResponse(resp *http.Response, apiMethod string, result any) error {
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	var envelope struct {
 		OK          bool            `json:"ok"`
@@ -233,6 +245,7 @@ func sleepBeforeRetry(ctx context.Context, attempt int) {
 	}
 }
 
+// APIError представляет ошибку, возвращённую Telegram Bot API.
 type APIError struct {
 	Method      string
 	HTTPStatus  int

@@ -1,3 +1,4 @@
+// Package bot реализует логику обработки сообщений и callback-ов Telegram-бота.
 package bot
 
 import (
@@ -14,6 +15,7 @@ import (
 
 const pollTimeoutSeconds = 50
 
+// TelegramClient описывает методы Telegram Bot API, необходимые боту.
 type TelegramClient interface {
 	GetUpdates(ctx context.Context, offset int64, timeout int) ([]telegram.Update, error)
 	SendRichMessage(ctx context.Context, chatID any, markdown string, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
@@ -22,6 +24,7 @@ type TelegramClient interface {
 	AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string, showAlert bool) error
 }
 
+// Bot обрабатывает входящие сообщения и callback-запросы от Telegram.
 type Bot struct {
 	cfg    config.Config
 	tg     TelegramClient
@@ -29,6 +32,7 @@ type Bot struct {
 	logger *slog.Logger
 }
 
+// New создаёт новый экземпляр Bot с указанными зависимостями.
 func New(cfg config.Config, tg TelegramClient, store drafts.Store, logger *slog.Logger) *Bot {
 	if logger == nil {
 		logger = slog.Default()
@@ -42,6 +46,7 @@ func New(cfg config.Config, tg TelegramClient, store drafts.Store, logger *slog.
 	}
 }
 
+// Run запускает бесконечный цикл получения и обработки обновлений из Telegram.
 func (b *Bot) Run(ctx context.Context) error {
 	var offset int64
 	for {
@@ -71,6 +76,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	}
 }
 
+// HandleUpdate обрабатывает одно обновление из Telegram.
 func (b *Bot) HandleUpdate(ctx context.Context, update telegram.Update) error {
 	switch {
 	case update.Message != nil:
@@ -121,7 +127,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 	if err != nil {
 		_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
 		if notifyErr != nil {
-			return fmt.Errorf("preview failed: %w; notify failed: %v", err, notifyErr)
+			return fmt.Errorf("preview failed: %w; notify failed: %w", err, notifyErr)
 		}
 		return nil
 	}
@@ -149,7 +155,7 @@ func (b *Bot) handlePhotoMessage(ctx context.Context, chatID int64, msg *telegra
 	if err != nil {
 		_, notifyErr := b.tg.SendMessage(ctx, chatID, "Не удалось отправить предпросмотр фото: "+telegramErrorDescription(err), nil)
 		if notifyErr != nil {
-			return fmt.Errorf("photo preview failed: %w; notify failed: %v", err, notifyErr)
+			return fmt.Errorf("photo preview failed: %w; notify failed: %w", err, notifyErr)
 		}
 		return nil
 	}
@@ -198,7 +204,7 @@ func (b *Bot) publishDraft(ctx context.Context, callback *telegram.CallbackQuery
 		if callback.Message != nil {
 			_, notifyErr := b.tg.SendMessage(ctx, callback.Message.Chat.ID, publishErrorText(err), nil)
 			if notifyErr != nil {
-				return fmt.Errorf("publish failed: %w; notify failed: %v", err, notifyErr)
+				return fmt.Errorf("publish failed: %w; notify failed: %w", err, notifyErr)
 			}
 		}
 		return nil
@@ -251,6 +257,7 @@ func (b *Bot) answerCallback(ctx context.Context, callback *telegram.CallbackQue
 	}
 }
 
+// IsAllowedUser проверяет, что userID совпадает с ownerID.
 func IsAllowedUser(userID, ownerID int64) bool {
 	return userID == ownerID
 }

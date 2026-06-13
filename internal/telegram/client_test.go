@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,28 +12,47 @@ import (
 	"testing"
 )
 
+type handlerCheck struct {
+	decodeInto  func(*json.Decoder) error
+	respondWith []byte
+}
+
+func setupTestServer(t *testing.T, method string, check handlerCheck) (*httptest.Server, *Client) {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/bot"+method) {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if check.decodeInto != nil {
+			if err := check.decodeInto(json.NewDecoder(r.Body)); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(check.respondWith)
+	}))
+	t.Cleanup(server.Close)
+
+	return server, NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+}
+
 func TestSendRichMessageSuccess(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendRichMessage") {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		var req SendRichMessageRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.RichMessage.Markdown != "# Title" {
-			t.Fatalf("unexpected markdown: %q", req.RichMessage.Markdown)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":10,"chat":{"id":42,"type":"private"}}}`))
-	}))
-	defer server.Close()
-
-	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+	_, client := setupTestServer(t, "secret/sendRichMessage", handlerCheck{
+		decodeInto: func(dec *json.Decoder) error {
+			var req SendRichMessageRequest
+			if err := dec.Decode(&req); err != nil {
+				return err
+			}
+			if req.RichMessage.Markdown != "# Title" {
+				return errors.New("unexpected markdown: " + req.RichMessage.Markdown)
+			}
+			return nil
+		},
+		respondWith: []byte(`{"ok":true,"result":{"message_id":10,"chat":{"id":42,"type":"private"}}}`),
+	})
 
 	msg, err := client.SendRichMessage(context.Background(), int64(42), "# Title", nil)
 	if err != nil {
@@ -48,17 +66,9 @@ func TestSendRichMessageSuccess(t *testing.T) {
 func TestGetMeSuccess(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/botsecret/getMe") {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"id":100,"is_bot":true,"username":"publisher_bot"}}`))
-	}))
-	defer server.Close()
-
-	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+	_, client := setupTestServer(t, "secret/getMe", handlerCheck{
+		respondWith: []byte(`{"ok":true,"result":{"id":100,"is_bot":true,"username":"publisher_bot"}}`),
+	})
 
 	botInfo, err := client.GetMe(context.Background())
 	if err != nil {
@@ -105,25 +115,19 @@ func TestGetUpdatesSuccess(t *testing.T) {
 func TestSendMessageSuccess(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendMessage") {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		var req SendMessageRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.Text != "hello" {
-			t.Fatalf("unexpected text: %q", req.Text)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":12,"chat":{"id":42,"type":"private"}}}`))
-	}))
-	defer server.Close()
-
-	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+	_, client := setupTestServer(t, "secret/sendMessage", handlerCheck{
+		decodeInto: func(dec *json.Decoder) error {
+			var req SendMessageRequest
+			if err := dec.Decode(&req); err != nil {
+				return err
+			}
+			if req.Text != "hello" {
+				return errors.New("unexpected text: " + req.Text)
+			}
+			return nil
+		},
+		respondWith: []byte(`{"ok":true,"result":{"message_id":12,"chat":{"id":42,"type":"private"}}}`),
+	})
 
 	msg, err := client.SendMessage(context.Background(), int64(42), "hello", nil)
 	if err != nil {
@@ -137,25 +141,19 @@ func TestSendMessageSuccess(t *testing.T) {
 func TestAnswerCallbackQuerySuccess(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/botsecret/answerCallbackQuery") {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		var req AnswerCallbackQueryRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.CallbackQueryID != "callback-id" {
-			t.Fatalf("unexpected callback query id: %q", req.CallbackQueryID)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer server.Close()
-
-	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+	_, client := setupTestServer(t, "secret/answerCallbackQuery", handlerCheck{
+		decodeInto: func(dec *json.Decoder) error {
+			var req AnswerCallbackQueryRequest
+			if err := dec.Decode(&req); err != nil {
+				return err
+			}
+			if req.CallbackQueryID != "callback-id" {
+				return errors.New("unexpected callback query id: " + req.CallbackQueryID)
+			}
+			return nil
+		},
+		respondWith: []byte(`{"ok":true}`),
+	})
 
 	if err := client.AnswerCallbackQuery(context.Background(), "callback-id", "ok", false); err != nil {
 		t.Fatalf("AnswerCallbackQuery returned error: %v", err)
@@ -268,5 +266,5 @@ func TestSendPhotoSuccess(t *testing.T) {
 }
 
 func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }

@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+const (
+	envToken   = "TELEGRAM_BOT_TOKEN"
+	envOwner   = "TELEGRAM_OWNER_ID"
+	envChannel = "TELEGRAM_CHANNEL_ID"
+)
+
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -18,9 +24,9 @@ func TestLoad(t *testing.T) {
 		{
 			name: "loads from .env",
 			env: map[string]string{
-				"TELEGRAM_BOT_TOKEN":  "test-token",
-				"TELEGRAM_OWNER_ID":   "42",
-				"TELEGRAM_CHANNEL_ID": "@test_channel",
+				envToken:   "test-token",
+				envOwner:   "42",
+				envChannel: "@test_channel",
 			},
 			want: Config{
 				BotToken:  "test-token",
@@ -30,34 +36,33 @@ func TestLoad(t *testing.T) {
 		},
 		{
 			name:        "missing token",
-			env:         map[string]string{"TELEGRAM_OWNER_ID": "42", "TELEGRAM_CHANNEL_ID": "@ch"},
+			env:         map[string]string{envOwner: "42", envChannel: "@ch"},
 			wantErr:     true,
-			wantErrText: "TELEGRAM_BOT_TOKEN",
+			wantErrText: envToken,
 		},
 		{
 			name:        "missing owner",
-			env:         map[string]string{"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHANNEL_ID": "@ch"},
+			env:         map[string]string{envToken: "tok", envChannel: "@ch"},
 			wantErr:     true,
-			wantErrText: "TELEGRAM_OWNER_ID",
+			wantErrText: envOwner,
 		},
 		{
 			name:        "invalid owner",
-			env:         map[string]string{"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_OWNER_ID": "abc", "TELEGRAM_CHANNEL_ID": "@ch"},
+			env:         map[string]string{envToken: "tok", envOwner: "abc", envChannel: "@ch"},
 			wantErr:     true,
-			wantErrText: "TELEGRAM_OWNER_ID",
+			wantErrText: envOwner,
 		},
 		{
 			name:        "missing channel",
-			env:         map[string]string{"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_OWNER_ID": "42"},
+			env:         map[string]string{envToken: "tok", envOwner: "42"},
 			wantErr:     true,
-			wantErrText: "TELEGRAM_CHANNEL_ID",
+			wantErrText: envChannel,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keys := []string{"TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_ID", "TELEGRAM_CHANNEL_ID"}
-			for _, key := range keys {
+			for _, key := range []string{envToken, envOwner, envChannel} {
 				t.Setenv(key, "")
 			}
 			for key, value := range tt.env {
@@ -83,25 +88,13 @@ func TestLoad(t *testing.T) {
 
 func TestLoadReadsDotEnv(t *testing.T) {
 	dir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd returned error: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(oldWD); err != nil {
-			t.Fatalf("restore working directory: %v", err)
-		}
-	}()
+	t.Chdir(dir)
 
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Chdir returned error: %v", err)
-	}
+	t.Setenv(envToken, "")
+	t.Setenv(envOwner, "")
+	t.Setenv(envChannel, "")
 
-	_ = os.Unsetenv("TELEGRAM_BOT_TOKEN")
-	_ = os.Unsetenv("TELEGRAM_OWNER_ID")
-	_ = os.Unsetenv("TELEGRAM_CHANNEL_ID")
-
-	env := "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_OWNER_ID=42\nTELEGRAM_CHANNEL_ID=@test_channel\n"
+	env := envToken + "=test-token\n" + envOwner + "=42\n" + envChannel + "=@test_channel\n"
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
@@ -122,32 +115,18 @@ func TestLoadReadsDotEnv(t *testing.T) {
 }
 
 func TestLoadDotEnvInvalidLine(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd returned error: %v", err)
-	}
-	defer func() {
-		if err := os.Chdir(oldWD); err != nil {
-			t.Fatalf("restore working directory: %v", err)
-		}
-	}()
+	t.Chdir(dir)
 
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Chdir returned error: %v", err)
-	}
-
-	_ = os.Unsetenv("TELEGRAM_BOT_TOKEN")
-	_ = os.Unsetenv("TELEGRAM_OWNER_ID")
-	_ = os.Unsetenv("TELEGRAM_CHANNEL_ID")
+	t.Setenv(envToken, "")
+	t.Setenv(envOwner, "")
+	t.Setenv(envChannel, "")
 
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("invalid line\n"), 0o600); err != nil {
 		t.Fatalf("write .env: %v", err)
 	}
 
-	_, err = Load()
+	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid .env line")
 	}

@@ -1,3 +1,4 @@
+// Package drafts предоставляет хранилище черновиков постов в памяти.
 package drafts
 
 import (
@@ -11,10 +12,13 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("draft not found")
+	// ErrNotFound возвращается, если черновик не найден в хранилище.
+	ErrNotFound = errors.New("draft not found")
+	// ErrAlreadyPublished возвращается, если черновик уже опубликован.
 	ErrAlreadyPublished = errors.New("draft already published")
 )
 
+// Draft представляет черновик поста: текстовый или фото с подписью.
 type Draft struct {
 	ID              string
 	Markdown        string
@@ -26,6 +30,7 @@ type Draft struct {
 	PublishedAt     *time.Time
 }
 
+// Store описывает операции с черновиками постов.
 type Store interface {
 	Create(markdown string) (Draft, error)
 	CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error)
@@ -34,19 +39,23 @@ type Store interface {
 	MarkPublished(id string) (Draft, error)
 }
 
+// MemoryStore хранит черновики в памяти с защитой мьютексом.
 type MemoryStore struct {
 	mu     sync.RWMutex
 	drafts map[string]Draft
 }
 
+// NewMemoryStore создаёт новое in-memory хранилище черновиков.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{drafts: make(map[string]Draft)}
 }
 
+// Create создаёт текстовый черновик Markdown-поста.
 func (s *MemoryStore) Create(markdown string) (Draft, error) {
 	return s.create(Draft{Markdown: markdown})
 }
 
+// CreatePhoto создаёт черновик поста с фото и подписью.
 func (s *MemoryStore) CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error) {
 	return s.create(Draft{
 		PhotoFileID:     photoFileID,
@@ -71,6 +80,7 @@ func (s *MemoryStore) create(draft Draft) (Draft, error) {
 	return draft, nil
 }
 
+// Get возвращает черновик по идентификатору.
 func (s *MemoryStore) Get(id string) (Draft, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -78,12 +88,14 @@ func (s *MemoryStore) Get(id string) (Draft, bool) {
 	return draft, ok
 }
 
+// Delete удаляет черновик из хранилища.
 func (s *MemoryStore) Delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.drafts, id)
 }
 
+// MarkPublished помечает черновик как опубликованный.
 func (s *MemoryStore) MarkPublished(id string) (Draft, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
