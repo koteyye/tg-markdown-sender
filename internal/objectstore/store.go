@@ -99,6 +99,16 @@ func (s *Store) Check(ctx context.Context) error {
 }
 
 func validateConfig(cfg Config) error {
+	if err := validateRequiredFields(cfg); err != nil {
+		return err
+	}
+	if err := validateHTTPSURL(cfg.Endpoint, "endpoint", false); err != nil {
+		return err
+	}
+	return validateHTTPSURL(cfg.PublicBaseURL, "public base URL", true)
+}
+
+func validateRequiredFields(cfg Config) error {
 	values := []struct {
 		name  string
 		value string
@@ -115,17 +125,17 @@ func validateConfig(cfg Config) error {
 			return fmt.Errorf("object storage %s is required", item.name)
 		}
 	}
+	return nil
+}
 
-	endpoint, err := url.Parse(cfg.Endpoint)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
-		return errors.New("object storage endpoint must be an HTTPS URL without credentials, path, query, or fragment")
+func validateHTTPSURL(rawURL, name string, allowPath bool) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return fmt.Errorf("object storage %s must be an HTTPS URL without credentials, query, or fragment", name)
 	}
-
-	publicURL, err := url.Parse(cfg.PublicBaseURL)
-	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
-		return errors.New("object storage public base URL must be an HTTPS URL without credentials, query, or fragment")
+	if !allowPath && parsedURL.Path != "" && parsedURL.Path != "/" {
+		return fmt.Errorf("object storage %s must be an HTTPS URL without credentials, path, query, or fragment", name)
 	}
-
 	return nil
 }
 

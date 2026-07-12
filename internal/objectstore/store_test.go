@@ -11,6 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+const (
+	testBucketName = "post-images"
+	testPublicURL  = "https://storage.yandexcloud.net/post-images"
+)
+
 type fakeClient struct {
 	putInput  *s3.PutObjectInput
 	putErr    error
@@ -39,8 +44,8 @@ func TestStoreUploadPhoto(t *testing.T) {
 
 	storageClient := &fakeClient{}
 	store := &Store{
-		bucket:        "post-images",
-		publicBaseURL: "https://storage.yandexcloud.net/post-images",
+		bucket:        testBucketName,
+		publicBaseURL: testPublicURL,
 		client:        storageClient,
 	}
 
@@ -51,7 +56,7 @@ func TestStoreUploadPhoto(t *testing.T) {
 	if !strings.HasPrefix(publicURL, "https://storage.yandexcloud.net/post-images/images/") || !strings.HasSuffix(publicURL, ".jpg") {
 		t.Fatalf("unexpected public URL: %q", publicURL)
 	}
-	if aws.ToString(storageClient.putInput.Bucket) != "post-images" {
+	if aws.ToString(storageClient.putInput.Bucket) != testBucketName {
 		t.Fatalf("unexpected bucket: %q", aws.ToString(storageClient.putInput.Bucket))
 	}
 	if aws.ToString(storageClient.putInput.ContentType) != "image/jpeg" {
@@ -70,8 +75,8 @@ func TestStoreUploadPhotoFailure(t *testing.T) {
 	t.Parallel()
 
 	store := &Store{
-		bucket:        "post-images",
-		publicBaseURL: "https://storage.yandexcloud.net/post-images",
+		bucket:        testBucketName,
+		publicBaseURL: testPublicURL,
 		client:        &fakeClient{putErr: errors.New("upload failed")},
 	}
 
@@ -88,12 +93,12 @@ func TestStoreCheck(t *testing.T) {
 		t.Parallel()
 
 		storageClient := &fakeClient{}
-		store := &Store{bucket: "post-images", client: storageClient}
+		store := &Store{bucket: testBucketName, client: storageClient}
 
 		if err := store.Check(context.Background()); err != nil {
 			t.Fatalf("Check returned error: %v", err)
 		}
-		if aws.ToString(storageClient.headInput.Bucket) != "post-images" {
+		if aws.ToString(storageClient.headInput.Bucket) != testBucketName {
 			t.Fatalf("unexpected bucket: %q", aws.ToString(storageClient.headInput.Bucket))
 		}
 	})
@@ -101,7 +106,7 @@ func TestStoreCheck(t *testing.T) {
 	t.Run("failure", func(t *testing.T) {
 		t.Parallel()
 
-		store := &Store{bucket: "post-images", client: &fakeClient{headErr: errors.New("access denied")}}
+		store := &Store{bucket: testBucketName, client: &fakeClient{headErr: errors.New("access denied")}}
 		err := store.Check(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "check bucket access") {
 			t.Fatalf("unexpected error: %v", err)
@@ -117,8 +122,8 @@ func TestValidateConfig(t *testing.T) {
 		Region:        "ru-central1",
 		AccessKeyID:   "access-key",
 		SecretKey:     "secret-key",
-		Bucket:        "post-images",
-		PublicBaseURL: "https://storage.yandexcloud.net/post-images",
+		Bucket:        testBucketName,
+		PublicBaseURL: testPublicURL,
 	}
 	tests := []struct {
 		name    string

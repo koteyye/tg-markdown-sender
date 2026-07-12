@@ -29,6 +29,11 @@ type MediaConfig struct {
 	PublicBaseURL string
 }
 
+type environmentValue struct {
+	name  string
+	value string
+}
+
 // Enabled reports whether Rich Markdown image uploads are configured.
 func (c MediaConfig) Enabled() bool {
 	return c.Endpoint != ""
@@ -104,10 +109,7 @@ func loadS3MediaConfig() (MediaConfig, bool, error) {
 		Bucket:        strings.TrimSpace(os.Getenv("MEDIA_S3_BUCKET")),
 		PublicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("MEDIA_S3_PUBLIC_BASE_URL")), "/"),
 	}
-	values := []struct {
-		name  string
-		value string
-	}{
+	values := []environmentValue{
 		{name: "MEDIA_S3_ENDPOINT", value: media.Endpoint},
 		{name: "MEDIA_S3_REGION", value: media.Region},
 		{name: "MEDIA_S3_ACCESS_KEY_ID", value: media.AccessKeyID},
@@ -140,10 +142,7 @@ func loadLegacyR2MediaConfig() (MediaConfig, bool, error) {
 		PublicBaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("R2_PUBLIC_BASE_URL")), "/"),
 	}
 
-	values := []struct {
-		name  string
-		value string
-	}{
+	values := []environmentValue{
 		{name: "R2_ACCOUNT_ID", value: r2.AccountID},
 		{name: "R2_ACCESS_KEY_ID", value: r2.AccessKeyID},
 		{name: "R2_SECRET_ACCESS_KEY", value: r2.SecretKey},
@@ -169,10 +168,7 @@ func loadLegacyR2MediaConfig() (MediaConfig, bool, error) {
 	return media, true, nil
 }
 
-func validateMediaEnv(values []struct {
-	name  string
-	value string
-}) (bool, error) {
+func validateMediaEnv(values []environmentValue) (bool, error) {
 	configured := false
 	for _, item := range values {
 		if item.value != "" {
@@ -192,13 +188,19 @@ func validateMediaEnv(values []struct {
 }
 
 func validateMediaURLs(media MediaConfig, endpointName, publicURLName string) error {
-	endpoint, err := url.Parse(media.Endpoint)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") {
-		return fmt.Errorf("%s must be an HTTPS URL without credentials, path, query, or fragment", endpointName)
+	if err := validateHTTPSURL(media.Endpoint, endpointName, false); err != nil {
+		return err
 	}
-	publicURL, err := url.Parse(media.PublicBaseURL)
-	if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" || publicURL.Fragment != "" {
-		return fmt.Errorf("%s must be an HTTPS URL without credentials, query, or fragment", publicURLName)
+	return validateHTTPSURL(media.PublicBaseURL, publicURLName, true)
+}
+
+func validateHTTPSURL(rawURL, name string, allowPath bool) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return fmt.Errorf("%s must be an HTTPS URL without credentials, query, or fragment", name)
+	}
+	if !allowPath && parsedURL.Path != "" && parsedURL.Path != "/" {
+		return fmt.Errorf("%s must be an HTTPS URL without credentials, path, query, or fragment", name)
 	}
 	return nil
 }

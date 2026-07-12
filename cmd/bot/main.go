@@ -34,23 +34,11 @@ func main() {
 
 	httpClient := &http.Client{Timeout: 65 * time.Second}
 	tg := telegram.NewClient(cfg.BotToken, httpClient, logger)
-	options := make([]bot.Option, 0, 1)
-	if cfg.Media.Enabled() {
-		mediaStore, err := objectstore.New(objectstore.Config{
-			Endpoint:      cfg.Media.Endpoint,
-			Region:        cfg.Media.Region,
-			AccessKeyID:   cfg.Media.AccessKeyID,
-			SecretKey:     cfg.Media.SecretKey,
-			Bucket:        cfg.Media.Bucket,
-			PublicBaseURL: cfg.Media.PublicBaseURL,
-		})
-		if err != nil {
-			logger.Error("image storage configuration error", "error", err)
-			return
-		}
-		options = append(options, bot.WithMediaStore(mediaStore))
+	app, err := newBot(cfg, tg, logger)
+	if err != nil {
+		logger.Error("image storage configuration error", "error", err)
+		return
 	}
-	app := bot.New(cfg, tg, drafts.NewMemoryStore(), logger, options...)
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
 	botInfo, err := tg.GetMe(startupCtx)
@@ -102,6 +90,25 @@ func main() {
 	logger.Info("bot stopped")
 	//nolint:gocritic // stopSignals is a sync.OnceFunc; single os.Exit is intentional at program end.
 	os.Exit(exitCode)
+}
+
+func newBot(cfg config.Config, tg *telegram.Client, logger *slog.Logger) (*bot.Bot, error) {
+	options := make([]bot.Option, 0, 1)
+	if cfg.Media.Enabled() {
+		mediaStore, err := objectstore.New(objectstore.Config{
+			Endpoint:      cfg.Media.Endpoint,
+			Region:        cfg.Media.Region,
+			AccessKeyID:   cfg.Media.AccessKeyID,
+			SecretKey:     cfg.Media.SecretKey,
+			Bucket:        cfg.Media.Bucket,
+			PublicBaseURL: cfg.Media.PublicBaseURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, bot.WithMediaStore(mediaStore))
+	}
+	return bot.New(cfg, tg, drafts.NewMemoryStore(), logger, options...), nil
 }
 
 func logLevel() slog.Level {
