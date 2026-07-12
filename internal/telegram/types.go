@@ -37,6 +37,14 @@ type PhotoSize struct {
 	FileSize     int    `json:"file_size,omitempty"`
 }
 
+// File описывает файл, доступный для скачивания через Telegram Bot API.
+type File struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id,omitempty"`
+	FileSize     int    `json:"file_size,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
+}
+
 // User представляет информацию о пользователе Telegram.
 type User struct {
 	ID        int64  `json:"id"`

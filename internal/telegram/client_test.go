@@ -265,6 +265,36 @@ func TestSendPhotoSuccess(t *testing.T) {
 	}
 }
 
+func TestDownloadFileSuccess(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/botsecret/getFile":
+			if r.URL.Query().Get("file_id") != "photo-file-id" {
+				t.Fatalf("unexpected file id: %q", r.URL.Query().Get("file_id"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"file_id":"photo-file-id","file_path":"photos/image.jpg"}}`))
+		case "/file/botsecret/photos/image.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("image-bytes"))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+	data, err := client.DownloadFile(context.Background(), "photo-file-id")
+	if err != nil {
+		t.Fatalf("DownloadFile returned error: %v", err)
+	}
+	if string(data) != "image-bytes" {
+		t.Fatalf("unexpected downloaded data: %q", data)
+	}
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }

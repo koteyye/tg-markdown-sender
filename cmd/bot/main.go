@@ -15,6 +15,7 @@ import (
 	"github.com/koteyye/tg-markdown-sender/internal/bot"
 	"github.com/koteyye/tg-markdown-sender/internal/config"
 	"github.com/koteyye/tg-markdown-sender/internal/drafts"
+	"github.com/koteyye/tg-markdown-sender/internal/objectstore"
 	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
@@ -33,7 +34,23 @@ func main() {
 
 	httpClient := &http.Client{Timeout: 65 * time.Second}
 	tg := telegram.NewClient(cfg.BotToken, httpClient, logger)
-	app := bot.New(cfg, tg, drafts.NewMemoryStore(), logger)
+	options := make([]bot.Option, 0, 1)
+	if cfg.Media.Enabled() {
+		mediaStore, err := objectstore.New(objectstore.Config{
+			Endpoint:      cfg.Media.Endpoint,
+			Region:        cfg.Media.Region,
+			AccessKeyID:   cfg.Media.AccessKeyID,
+			SecretKey:     cfg.Media.SecretKey,
+			Bucket:        cfg.Media.Bucket,
+			PublicBaseURL: cfg.Media.PublicBaseURL,
+		})
+		if err != nil {
+			logger.Error("image storage configuration error", "error", err)
+			return
+		}
+		options = append(options, bot.WithMediaStore(mediaStore))
+	}
+	app := bot.New(cfg, tg, drafts.NewMemoryStore(), logger, options...)
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
 	botInfo, err := tg.GetMe(startupCtx)

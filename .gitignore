@@ -1,6 +1,7 @@
 .env
 env
 .agents/
+.opencode/
 dist/
 .gocache/
 *.new
