@@ -6,7 +6,8 @@ A single-binary Go Telegram bot that publishes rich Markdown posts and photo cap
 
 - Accepts messages only from a configured owner (`TELEGRAM_OWNER_ID`).
 - Renders a preview of the final post before publishing.
-- Publishes rich Markdown posts with entities restored from `sendRichMessage`.
+- Publishes rich Markdown posts from Markdown protected in `md` code blocks.
+- Schedules a preview for the nearest selected Moscow-time slot.
 - Publishes photos with captions as a single message via `sendPhoto` when image storage is not configured.
 - Converts a Telegram photo with a Markdown caption into a Rich Markdown media block when S3-compatible image storage is configured.
 - Explains image publishing with `/infoimage` and checks authenticated bucket access with `/checkstorage`.
@@ -40,13 +41,33 @@ Run locally:
 go run ./cmd/bot
 ```
 
+## Sending Markdown
+
+Telegram clients can render Markdown while composing a message and remove its source markers before the bot receives it. Send every Rich Markdown post inside one fenced code block with the language `md`; the bot uses only the block contents.
+
+````md
+```md
+**Знакомьтесь: Рефералодав**
+
+![](https://example.com/image.jpg)
+
+Обычный текст с `кодом` и [гиперссылкой](https://example.com).
+```
+````
+
+## Scheduled Publishing
+
+The preview has an `Отправить потом` button. Choose one of the Moscow-time slots: `09:00`, `12:00`, `15:00`, `18:00`, or `21:00`. If the selected time has already passed, the post is scheduled for that time on the next day.
+
+Drafts and scheduled posts are stored in memory, so restart the bot only after scheduled posts have been published.
+
 ## Images in Rich Markdown
 
 Use `/infoimage` in the bot for these instructions and `/checkstorage` to verify the endpoint, service account credentials, and bucket permissions without uploading an object.
 
 Image storage is optional. Without it, a photo sent to the bot is published through `sendPhoto` with its Telegram caption.
 
-With S3-compatible storage configured, send the bot a photo with a Markdown caption. The bot downloads the photo from Telegram, uploads it to the configured bucket, and creates one Rich Markdown post using the public image URL. Put `{{image}}` on a separate line to choose where the image appears; without the placeholder, the image is appended after the caption.
+With S3-compatible storage configured, send the bot a photo with a caption inside an `md` code block. The bot downloads the photo from Telegram, uploads it to the configured bucket, and creates one Rich Markdown post using the public image URL. Put `{{image}}` on a separate line to choose where the image appears; without the placeholder, the image is appended after the caption.
 
 ```md
 # Post title

@@ -1,85 +1,41 @@
 package bot
 
 import (
-	"sort"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
-type markdownInsertion struct {
-	pos   int
-	text  string
-	order int
-}
+const markdownCodeBlockLanguage = "md"
 
-func restoreMarkdownEntities(text string, entities []telegram.MessageEntity) string {
-	if len(entities) == 0 || text == "" {
-		return text
-	}
+// markdownFromCodeBlock returns the original Markdown protected from Telegram's client-side parser.
+func markdownFromCodeBlock(text string, entities []telegram.MessageEntity) (string, bool) {
+	var markdown string
+	found := false
 
-	insertions := make([]markdownInsertion, 0, len(entities)*2)
 	for _, entity := range entities {
-		prefix, suffix, ok := markdownMarkers(entity)
-		if !ok {
+		isMarkdownBlock := entity.Type == "pre" && strings.EqualFold(
+			strings.TrimSpace(entity.Language),
+			markdownCodeBlockLanguage,
+		)
+		if !isMarkdownBlock {
 			continue
 		}
 
 		start, end, ok := entityByteRange(text, entity)
-		if !ok {
-			continue
+		if !ok || found {
+			return "", false
 		}
 
-		insertions = append(
-			insertions,
-			markdownInsertion{pos: start, text: prefix, order: 0},
-			markdownInsertion{pos: end, text: suffix, order: 1},
-		)
+		markdown = text[start:end]
+		found = true
 	}
 
-	if len(insertions) == 0 {
-		return text
+	if !found || strings.TrimSpace(markdown) == "" {
+		return "", false
 	}
-
-	sort.SliceStable(insertions, func(i, j int) bool {
-		if insertions[i].pos != insertions[j].pos {
-			return insertions[i].pos > insertions[j].pos
-		}
-		return insertions[i].order < insertions[j].order
-	})
-
-	var builder strings.Builder
-	builder.Grow(len(text) + insertionTextLen(insertions))
-	builder.WriteString(text)
-	result := builder.String()
-
-	for _, insertion := range insertions {
-		result = result[:insertion.pos] + insertion.text + result[insertion.pos:]
-	}
-
-	return result
-}
-
-func markdownMarkers(entity telegram.MessageEntity) (prefix, suffix string, ok bool) {
-	switch entity.Type {
-	case "pre":
-		language := strings.TrimSpace(entity.Language)
-		if language == "" {
-			return "```\n", "\n```", true
-		}
-		return "```" + language + "\n", "\n```", true
-	case "code":
-		return "`", "`", true
-	case "custom_emoji":
-		customEmojiID := strings.TrimSpace(entity.CustomEmojiID)
-		if customEmojiID == "" {
-			return "", "", false
-		}
-		return "![", "](tg://emoji?id=" + customEmojiID + ")", true
-	default:
-		return "", "", false
-	}
+	return markdown, true
 }
 
 func entityByteRange(text string, entity telegram.MessageEntity) (start, end int, ok bool) {
@@ -120,14 +76,6 @@ func byteIndexForUTF16Offset(text string, target int) (int, bool) {
 		return len(text), true
 	}
 	return 0, false
-}
-
-func insertionTextLen(insertions []markdownInsertion) int {
-	total := 0
-	for _, insertion := range insertions {
-		total += len(insertion.text)
-	}
-	return total
 }
 
 func entityDebugAttrs(entities []telegram.MessageEntity) []map[string]string {

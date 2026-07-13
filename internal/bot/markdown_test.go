@@ -8,7 +8,7 @@ import (
 	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
-func TestRestoreMarkdownEntities(t *testing.T) {
+func TestMarkdownFromCodeBlock(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -16,93 +16,63 @@ func TestRestoreMarkdownEntities(t *testing.T) {
 		text     string
 		entities []telegram.MessageEntity
 		want     string
+		wantOK   bool
 	}{
 		{
-			name:     "pre without language",
-			text:     "console.log(\"hello\");",
-			entities: []telegram.MessageEntity{entityForSubstring(t, "console.log(\"hello\");", "console.log(\"hello\");", "pre", "")},
-			want:     "```\nconsole.log(\"hello\");\n```",
+			name: "extracts md block and ignores surrounding text",
+			text: "Комментарий вне поста\n\n**Знакомьтесь: Рефералодав**\n\n![](https://example.com/image.jpg)\n\nПосле поста",
+			entities: []telegram.MessageEntity{entityForSubstring(
+				t,
+				"Комментарий вне поста\n\n**Знакомьтесь: Рефералодав**\n\n![](https://example.com/image.jpg)\n\nПосле поста",
+				"**Знакомьтесь: Рефералодав**\n\n![](https://example.com/image.jpg)",
+				"pre",
+				"md",
+			)},
+			want:   "**Знакомьтесь: Рефералодав**\n\n![](https://example.com/image.jpg)",
+			wantOK: true,
 		},
 		{
-			name:     "pre with language and unicode",
-			text:     "console.log(\"Markdown рулит 🚀\");",
-			entities: []telegram.MessageEntity{entityForSubstring(t, "console.log(\"Markdown рулит 🚀\");", "console.log(\"Markdown рулит 🚀\");", "pre", "javascript")},
-			want:     "```javascript\nconsole.log(\"Markdown рулит 🚀\");\n```",
+			name:     "supports unicode offsets",
+			text:     "🚀\n**Текст с кодом `fmt.Println`**",
+			entities: []telegram.MessageEntity{entityForSubstring(t, "🚀\n**Текст с кодом `fmt.Println`**", "**Текст с кодом `fmt.Println`**", "pre", "MD")},
+			want:     "**Текст с кодом `fmt.Println`**",
+			wantOK:   true,
 		},
 		{
-			name:     "inline code",
-			text:     "Use fmt.Println here",
-			entities: []telegram.MessageEntity{entityForSubstring(t, "Use fmt.Println here", "fmt.Println", "code", "")},
-			want:     "Use `fmt.Println` here",
+			name:     "requires md language",
+			text:     "# Heading",
+			entities: []telegram.MessageEntity{entityForSubstring(t, "# Heading", "# Heading", "pre", "markdown")},
+			wantOK:   false,
 		},
 		{
-			name:     "russian text before block",
-			text:     "Вставка кода:\n\nconsole.log(1);",
-			entities: []telegram.MessageEntity{entityForSubstring(t, "Вставка кода:\n\nconsole.log(1);", "console.log(1);", "pre", "javascript")},
-			want:     "Вставка кода:\n\n```javascript\nconsole.log(1);\n```",
+			name:     "rejects empty block",
+			text:     " ",
+			entities: []telegram.MessageEntity{entityForSubstring(t, " ", " ", "pre", "md")},
+			wantOK:   false,
 		},
 		{
-			name:     "emoji before block",
-			text:     "🚀\nconsole.log(1);",
-			entities: []telegram.MessageEntity{entityForSubstring(t, "🚀\nconsole.log(1);", "console.log(1);", "pre", "")},
-			want:     "🚀\n```\nconsole.log(1);\n```",
-		},
-		{
-			name: "multiple entities",
-			text: "Use fmt.Println\nconsole.log(1);",
+			name: "rejects multiple md blocks",
+			text: "first\nsecond",
 			entities: []telegram.MessageEntity{
-				entityForSubstring(t, "Use fmt.Println\nconsole.log(1);", "fmt.Println", "code", ""),
-				entityForSubstring(t, "Use fmt.Println\nconsole.log(1);", "console.log(1);", "pre", "javascript"),
+				entityForSubstring(t, "first\nsecond", "first", "pre", "md"),
+				entityForSubstring(t, "first\nsecond", "second", "pre", "md"),
 			},
-			want: "Use `fmt.Println`\n```javascript\nconsole.log(1);\n```",
-		},
-		{
-			name:     "custom emoji",
-			text:     "😁 Premium",
-			entities: []telegram.MessageEntity{customEmojiEntityForSubstring(t, "😁 Premium", "😁", "1234567890123456789")},
-			want:     "![😁](tg://emoji?id=1234567890123456789) Premium",
-		},
-		{
-			name: "custom emoji with other entities",
-			text: "Старт 😁 and fmt.Println\nconsole.log(1);",
-			entities: []telegram.MessageEntity{
-				customEmojiEntityForSubstring(t, "Старт 😁 and fmt.Println\nconsole.log(1);", "😁", "1234567890123456789"),
-				entityForSubstring(t, "Старт 😁 and fmt.Println\nconsole.log(1);", "fmt.Println", "code", ""),
-				entityForSubstring(t, "Старт 😁 and fmt.Println\nconsole.log(1);", "console.log(1);", "pre", "javascript"),
-			},
-			want: "Старт ![😁](tg://emoji?id=1234567890123456789) and `fmt.Println`\n```javascript\nconsole.log(1);\n```",
-		},
-		{
-			name:     "custom emoji without id does not change text",
-			text:     "😁 Premium",
-			entities: []telegram.MessageEntity{customEmojiEntityForSubstring(t, "😁 Premium", "😁", "")},
-			want:     "😁 Premium",
-		},
-		{
-			name:     "no entities does not change text",
-			text:     "# Заголовок\n\n- пункт\n\n```go\nfmt.Println(\"ok\")\n```",
-			entities: nil,
-			want:     "# Заголовок\n\n- пункт\n\n```go\nfmt.Println(\"ok\")\n```",
+			wantOK: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := restoreMarkdownEntities(tt.text, tt.entities)
+			got, ok := markdownFromCodeBlock(tt.text, tt.entities)
+			if ok != tt.wantOK {
+				t.Fatalf("markdownFromCodeBlock() ok = %v, want %v", ok, tt.wantOK)
+			}
 			if got != tt.want {
 				t.Fatalf("unexpected markdown:\nwant: %q\n got: %q", tt.want, got)
 			}
 		})
 	}
-}
-
-func customEmojiEntityForSubstring(t *testing.T, text, substring, customEmojiID string) telegram.MessageEntity {
-	t.Helper()
-
-	entity := entityForSubstring(t, text, substring, "custom_emoji", "")
-	entity.CustomEmojiID = customEmojiID
-	return entity
 }
 
 func entityForSubstring(t *testing.T, text, substring, entityType, language string) telegram.MessageEntity {
