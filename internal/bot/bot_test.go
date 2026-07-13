@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	wantFileID = "large"
+	wantFileID      = "large"
+	testPhotoFileID = "photo-file-id"
 )
 
 func TestIsAllowedUser(t *testing.T) {
@@ -434,12 +435,12 @@ func TestHandleRichPhotoMessage(t *testing.T) {
 		Chat:            telegram.Chat{ID: 100},
 		Caption:         caption,
 		CaptionEntities: []telegram.MessageEntity{entityForSubstring(t, caption, caption, "pre", "md")},
-		Photo:           []telegram.PhotoSize{{FileID: "photo-file-id", Width: 1280, Height: 720, FileSize: 1000}},
+		Photo:           []telegram.PhotoSize{{FileID: testPhotoFileID, Width: 1280, Height: 720, FileSize: 1000}},
 	})
 	if err != nil {
 		t.Fatalf("handleMessage returned error: %v", err)
 	}
-	if client.downloadedFileID != "photo-file-id" {
+	if client.downloadedFileID != testPhotoFileID {
 		t.Fatalf("unexpected downloaded file id: %q", client.downloadedFileID)
 	}
 	if string(media.uploadedPhoto) != "photo-data" {
@@ -509,7 +510,7 @@ func TestHandleRichPhotoMessageWithoutCaptionReturnsMarkdownImageBlock(t *testin
 	err := b.handleMessage(context.Background(), &telegram.Message{
 		From:  &telegram.User{ID: 42},
 		Chat:  telegram.Chat{ID: 100},
-		Photo: []telegram.PhotoSize{{FileID: "photo-file-id", Width: 1280, Height: 720, FileSize: 1000}},
+		Photo: []telegram.PhotoSize{{FileID: testPhotoFileID, Width: 1280, Height: 720, FileSize: 1000}},
 	})
 	if err != nil {
 		t.Fatalf("handleMessage returned error: %v", err)
@@ -542,7 +543,7 @@ func TestHandleRichPhotoMessageRejectsCaptionOutsideCodeBlock(t *testing.T) {
 		From:    &telegram.User{ID: 42},
 		Chat:    telegram.Chat{ID: 100},
 		Caption: "**Caption**",
-		Photo:   []telegram.PhotoSize{{FileID: "photo-file-id", Width: 1280, Height: 720, FileSize: 1000}},
+		Photo:   []telegram.PhotoSize{{FileID: testPhotoFileID, Width: 1280, Height: 720, FileSize: 1000}},
 	})
 	if err != nil {
 		t.Fatalf("handleMessage returned error: %v", err)
