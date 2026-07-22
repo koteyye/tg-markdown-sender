@@ -13,12 +13,12 @@ import (
 
 	"github.com/koteyye/tg-markdown-sender/internal/config"
 	"github.com/koteyye/tg-markdown-sender/internal/drafts"
+	"github.com/koteyye/tg-markdown-sender/internal/rich"
 	"github.com/koteyye/tg-markdown-sender/internal/telegram"
 )
 
 const (
 	pollTimeoutSeconds         = 50
-	storageCheckTimeout        = 15 * time.Second
 	scheduledPostCheckInterval = time.Second
 	moscowUTCOffsetSeconds     = 3 * 60 * 60
 )
@@ -50,21 +50,9 @@ type scheduledDraft struct {
 // TelegramClient описывает методы Telegram Bot API, необходимые боту.
 type TelegramClient interface {
 	GetUpdates(ctx context.Context, offset int64, timeout int) ([]telegram.Update, error)
-	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
-	SendRichMessage(ctx context.Context, chatID any, markdown string, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
-	SendPhoto(ctx context.Context, chatID any, photoFileID, caption string, captionEntities []telegram.MessageEntity, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
+	SendRichMessage(ctx context.Context, chatID any, message telegram.InputRichMessage, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
 	SendMessage(ctx context.Context, chatID any, text string, replyMarkup *telegram.ReplyMarkup) (*telegram.Message, error)
 	AnswerCallbackQuery(ctx context.Context, callbackQueryID, text string, showAlert bool) error
-}
-
-// MediaStore сохраняет фото и возвращает публичный HTTPS URL.
-type MediaStore interface {
-	UploadPhoto(ctx context.Context, data []byte) (string, error)
-}
-
-// MediaStoreChecker checks whether an image store is reachable with its configured credentials.
-type MediaStoreChecker interface {
-	Check(ctx context.Context) error
 }
 
 // Bot обрабатывает входящие сообщения и callback-запросы от Telegram.
@@ -73,41 +61,28 @@ type Bot struct {
 	tg            TelegramClient
 	store         drafts.Store
 	logger        *slog.Logger
-	media         MediaStore
+	media         *rich.AliasRegistry
 	now           func() time.Time
 	publishMu     sync.Mutex
 	scheduledMu   sync.Mutex
 	scheduledPost map[string]scheduledDraft
 }
 
-// Option изменяет настройки Bot при создании.
-type Option func(*Bot)
-
-// WithMediaStore включает публикацию фотографий как Rich Markdown media blocks.
-func WithMediaStore(store MediaStore) Option {
-	return func(b *Bot) {
-		b.media = store
-	}
-}
-
 // New создаёт новый экземпляр Bot с указанными зависимостями.
-func New(cfg config.Config, tg TelegramClient, store drafts.Store, logger *slog.Logger, opts ...Option) *Bot {
+func New(cfg config.Config, tg TelegramClient, store drafts.Store, logger *slog.Logger) *Bot {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	b := &Bot{
+	return &Bot{
 		cfg:           cfg,
 		tg:            tg,
 		store:         store,
 		logger:        logger,
+		media:         rich.NewAliasRegistry(),
 		now:           time.Now,
 		scheduledPost: make(map[string]scheduledDraft),
 	}
-	for _, opt := range opts {
-		opt(b)
-	}
-	return b
 }
 
 // Run запускает бесконечный цикл получения и обработки обновлений из Telegram.
@@ -166,16 +141,19 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 		return nil
 	}
 	chatID := msg.Chat.ID
-	if !IsAllowedUser(msg.From.ID, b.cfg.OwnerID) {
+	ownerID := msg.From.ID
+	if !IsAllowedUser(ownerID, b.cfg.OwnerID) {
 		_, err := b.tg.SendMessage(ctx, chatID, "Доступ запрещён.", nil)
 		return err
 	}
 
+	// Нативный Rich Message имеет приоритет над всеми остальными сценариями.
+	if msg.RichMessage != nil {
+		return b.handleNativeRichMessage(ctx, chatID, ownerID, msg.RichMessage)
+	}
+
 	if len(msg.Photo) > 0 {
-		if b.media != nil {
-			return b.handleRichPhotoMessage(ctx, chatID, msg)
-		}
-		return b.handlePhotoMessage(ctx, chatID, msg)
+		return b.handlePhotoMessage(ctx, chatID, ownerID, msg)
 	}
 
 	if len(msg.Entities) > 0 {
@@ -183,20 +161,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 	}
 
 	if markdown, ok := markdownFromCodeBlock(msg.Text, msg.Entities); ok {
-		draft, err := b.store.Create(markdown)
-		if err != nil {
-			return fmt.Errorf("create draft: %w", err)
-		}
-
-		_, err = b.tg.SendRichMessage(ctx, chatID, draft.Markdown, previewKeyboard(draft.ID))
-		if err != nil {
-			_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
-			if notifyErr != nil {
-				return fmt.Errorf("preview failed: %w; notify failed: %w", err, notifyErr)
-			}
-		}
-
-		return nil
+		return b.handleMarkdownDraft(ctx, chatID, ownerID, markdown)
 	}
 
 	text := strings.TrimSpace(msg.Text)
@@ -207,116 +172,166 @@ func (b *Bot) handleMessage(ctx context.Context, msg *telegram.Message) error {
 	case "/infoimage":
 		_, err := b.tg.SendMessage(ctx, chatID, imageInfoText, nil)
 		return err
-	case "/checkstorage":
-		return b.checkStorage(ctx, chatID)
 	}
 
 	_, err := b.tg.SendMessage(ctx, chatID, markdownInputText, nil)
 	return err
 }
 
-const imageInfoText = "Изображения в Rich Markdown:\n\n1. Отправь фото без подписи. Я верну строку ![](https://...) - вставь её в нужное место Markdown-поста.\n\n2. Для одного фото и текста отправь фото с подписью в блоке кода с языком md. Поставь {{image}} отдельной строкой там, где нужна картинка; без {{image}} она будет добавлена в конец поста.\n\nПодпись к фото ограничена 1024 символами. Для длинного поста сначала отправь фото без подписи.\n\nПроверить доступ к хранилищу: /checkstorage"
+const imageInfoText = "Изображения в Rich Markdown (через Telegram file_id):\n\n" +
+	"1. Отправь фото без подписи. Я верну строку вида ![](tg://photo?id=photo_ab12cd34) — вставь её в нужное место Markdown-поста.\n\n" +
+	"2. Для одного фото и текста отправь фото с подписью в блоке кода с языком md. " +
+	"Поставь {{image}} отдельной строкой там, где нужна картинка; без {{image}} она будет добавлена в конец поста.\n\n" +
+	"3. Медиа переиспользуются через Telegram file_id — внешнее хранилище не требуется. " +
+	"Внутри Markdown можно использовать ссылки tg://photo?id=..., tg://video?id=... и tg://audio?id=....\n\n" +
+	"Внимание: алиасы медиа хранятся в памяти и теряются после перезапуска бота. " +
+	"Если алиас потерян, пришлите изображение заново."
 
-func (b *Bot) checkStorage(ctx context.Context, chatID int64) error {
-	if b.media == nil {
-		_, err := b.tg.SendMessage(ctx, chatID, "Хранилище изображений не настроено.", nil)
-		return err
-	}
-
-	checker, ok := b.media.(MediaStoreChecker)
-	if !ok {
-		_, err := b.tg.SendMessage(ctx, chatID, "Проверка хранилища недоступна в текущей конфигурации.", nil)
-		return err
-	}
-
-	checkCtx, cancel := context.WithTimeout(ctx, storageCheckTimeout)
-	defer cancel()
-	if err := checker.Check(checkCtx); err != nil {
-		b.logger.Error("image storage check failed", "error", err)
-		_, notifyErr := b.tg.SendMessage(ctx, chatID, "Хранилище недоступно. Проверь endpoint, ключи service account и права на bucket.", nil)
-		return notifyErr
-	}
-
-	_, err := b.tg.SendMessage(ctx, chatID, "Хранилище доступно: подключение и права service account на bucket подтверждены.", nil)
-	return err
-}
-
-func (b *Bot) handleRichPhotoMessage(ctx context.Context, chatID int64, msg *telegram.Message) error {
-	markdown := ""
-	if strings.TrimSpace(msg.Caption) != "" {
-		var ok bool
-		markdown, ok = markdownFromCodeBlock(msg.Caption, msg.CaptionEntities)
-		if !ok {
-			_, err := b.tg.SendMessage(ctx, chatID, markdownInputText, nil)
-			return err
-		}
-	}
-
-	photo, ok := largestPhoto(msg.Photo)
-	if !ok {
-		_, err := b.tg.SendMessage(ctx, chatID, "Не удалось прочитать фото. Попробуй отправить изображение ещё раз.", nil)
-		return err
-	}
-
-	data, err := b.tg.DownloadFile(ctx, photo.FileID)
+// handleNativeRichMessage преобразует входящее сообщение из встроенного редактора
+// в исходящий InputRichMessage, сохраняет черновик и показывает предпросмотр.
+func (b *Bot) handleNativeRichMessage(ctx context.Context, chatID, _ int64, in *rich.RichMessage) error {
+	out, err := rich.Convert(*in)
 	if err != nil {
-		return b.sendPhotoProcessingError(ctx, chatID, "скачать", err)
-	}
-	imageURL, err := b.media.UploadPhoto(ctx, data)
-	if err != nil {
-		return b.sendPhotoProcessingError(ctx, chatID, "загрузить", err)
-	}
-	if strings.TrimSpace(msg.Caption) == "" {
-		_, err := b.tg.SendMessage(ctx, chatID, "Фото загружено в R2. Вставь эту строку в Markdown-пост:\n\n"+markdownImageBlock(imageURL), nil)
-		return err
+		b.logger.Error("convert rich message failed", "error", err)
+		return b.notifyConvertError(ctx, chatID, err)
 	}
 
-	markdown = markdownWithImage(markdown, imageURL)
-	draft, err := b.store.Create(markdown)
+	draft, err := b.store.Create(out)
 	if err != nil {
-		return fmt.Errorf("create rich photo draft: %w", err)
+		return fmt.Errorf("create rich draft: %w", err)
 	}
 
-	_, err = b.tg.SendRichMessage(ctx, chatID, draft.Markdown, previewKeyboard(draft.ID))
+	_, err = b.tg.SendRichMessage(ctx, chatID, draft.RichMessage, previewKeyboard(draft.ID))
 	if err != nil {
 		_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
 		if notifyErr != nil {
-			return fmt.Errorf("rich photo preview failed: %w; notify failed: %w", err, notifyErr)
+			return fmt.Errorf("preview failed: %w; notify failed: %w", err, notifyErr)
 		}
 	}
-
 	return nil
 }
 
-func (b *Bot) sendPhotoProcessingError(ctx context.Context, chatID int64, action string, cause error) error {
-	b.logger.Error("rich photo processing failed", "action", action, "error", cause)
-	_, err := b.tg.SendMessage(ctx, chatID, "Не удалось "+action+" фото для публикации. Попробуй ещё раз позже.", nil)
+func (b *Bot) notifyConvertError(ctx context.Context, chatID int64, cause error) error {
+	var unsupported *rich.UnsupportedBlockError
+	if errors.As(cause, &unsupported) {
+		_, err := b.tg.SendMessage(ctx, chatID,
+			"Пост содержит неподдерживаемый тип блока: "+unsupported.Type+
+				". Убери его и пришли сообщение ещё раз.", nil)
+		return err
+	}
+	var missing *rich.MissingFileIDError
+	if errors.As(cause, &missing) {
+		_, err := b.tg.SendMessage(ctx, chatID,
+			"В посте есть медиа без file_id ("+missing.Type+"). Пришли медиа заново.", nil)
+		return err
+	}
+	_, err := b.tg.SendMessage(ctx, chatID,
+		"Не удалось преобразовать Rich Message: "+cause.Error()+
+			". Пришли пост ещё раз или используй блок md.", nil)
 	return err
 }
 
-func (b *Bot) handlePhotoMessage(ctx context.Context, chatID int64, msg *telegram.Message) error {
+// handlePhotoMessage обрабатывает фото: с md-подписью создаёт Rich Message с file_id,
+// без подписи — регистрирует медиа-алиас и возвращает строку для вставки.
+func (b *Bot) handlePhotoMessage(ctx context.Context, chatID, ownerID int64, msg *telegram.Message) error {
 	photo, ok := largestPhoto(msg.Photo)
 	if !ok {
 		_, err := b.tg.SendMessage(ctx, chatID, "Не удалось прочитать фото. Попробуй отправить изображение ещё раз.", nil)
 		return err
 	}
 
-	if len(msg.CaptionEntities) > 0 {
-		b.logger.Debug("incoming photo caption entities", "entities", entityDebugAttrs(msg.CaptionEntities))
+	if strings.TrimSpace(msg.Caption) != "" {
+		markdown, codeBlockOK := markdownFromCodeBlock(msg.Caption, msg.CaptionEntities)
+		if !codeBlockOK {
+			_, err := b.tg.SendMessage(ctx, chatID, markdownInputText, nil)
+			return err
+		}
+		return b.handlePhotoWithCaption(ctx, chatID, photo.FileID, markdown)
 	}
 
-	draft, err := b.store.CreatePhoto(photo.FileID, msg.Caption, msg.CaptionEntities)
-	if err != nil {
-		return fmt.Errorf("create photo draft: %w", err)
+	return b.handlePhotoWithoutCaption(ctx, chatID, ownerID, photo.FileID)
+}
+
+// handlePhotoWithCaption создаёт Rich Message с photo alias "cover" и file_id.
+// {{image}} заменяется на ссылку; без плейсхолдера фото добавляется в конец.
+func (b *Bot) handlePhotoWithCaption(ctx context.Context, chatID int64, fileID, markdown string) error {
+	const coverAlias = "cover"
+	imageRef := rich.MarkdownImageRef(coverAlias)
+
+	switch {
+	case rich.HasImagePlaceholder(markdown):
+		markdown = strings.ReplaceAll(markdown, "{{image}}", imageRef)
+	case strings.TrimSpace(markdown) == "":
+		markdown = imageRef
+	default:
+		markdown = markdown + "\n\n" + imageRef
 	}
 
-	_, err = b.tg.SendPhoto(ctx, chatID, draft.PhotoFileID, draft.Caption, draft.CaptionEntities, previewKeyboard(draft.ID))
+	rm := telegram.InputRichMessage{
+		Markdown: markdown,
+		Media: []rich.InputRichMessageMedia{
+			{ID: coverAlias, Media: rich.NewPhotoMedia(fileID)},
+		},
+	}
+
+	draft, err := b.store.Create(rm)
 	if err != nil {
-		_, notifyErr := b.tg.SendMessage(ctx, chatID, "Не удалось отправить предпросмотр фото: "+telegramErrorDescription(err), nil)
+		return fmt.Errorf("create photo-rich draft: %w", err)
+	}
+
+	_, err = b.tg.SendRichMessage(ctx, chatID, draft.RichMessage, previewKeyboard(draft.ID))
+	if err != nil {
+		_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
 		if notifyErr != nil {
 			return fmt.Errorf("photo preview failed: %w; notify failed: %w", err, notifyErr)
 		}
-		return nil
+	}
+	return nil
+}
+
+// handlePhotoWithoutCaption регистрирует file_id под новым алиасом и возвращает
+// строку ![](tg://photo?id=<alias>) для вставки в последующий Markdown.
+func (b *Bot) handlePhotoWithoutCaption(ctx context.Context, chatID, ownerID int64, fileID string) error {
+	alias, err := b.media.Register(ownerID, rich.InputRichMessageMedia{
+		Media: rich.NewPhotoMedia(fileID),
+	})
+	if err != nil {
+		return fmt.Errorf("register media alias: %w", err)
+	}
+
+	_, err = b.tg.SendMessage(ctx, chatID,
+		"Фото готово. Вставь эту строку в Markdown-пост:\n\n"+rich.MarkdownImageRef(alias), nil)
+	return err
+}
+
+// handleMarkdownDraft создаёт черновик из Markdown, разрешая tg://media?id= алиасы.
+func (b *Bot) handleMarkdownDraft(ctx context.Context, chatID, ownerID int64, markdown string) error {
+	rm := telegram.InputRichMessage{Markdown: markdown}
+
+	media, _, err := b.media.ResolveReferences(ownerID, markdown)
+	if err != nil {
+		if errors.Is(err, rich.ErrUnknownMediaAlias) {
+			_, notifyErr := b.tg.SendMessage(ctx, chatID,
+				"Неизвестный медиа-алиас. Пришли изображение заново — бот вернёт новую строку для вставки.", nil)
+			return notifyErr
+		}
+		return fmt.Errorf("resolve media references: %w", err)
+	}
+	if len(media) > 0 {
+		rm.Media = media
+	}
+
+	draft, err := b.store.Create(rm)
+	if err != nil {
+		return fmt.Errorf("create draft: %w", err)
+	}
+
+	_, err = b.tg.SendRichMessage(ctx, chatID, draft.RichMessage, previewKeyboard(draft.ID))
+	if err != nil {
+		_, notifyErr := b.tg.SendMessage(ctx, chatID, markdownErrorText(err), nil)
+		if notifyErr != nil {
+			return fmt.Errorf("preview failed: %w; notify failed: %w", err, notifyErr)
+		}
 	}
 
 	return nil
@@ -404,12 +419,7 @@ func (b *Bot) publishDraftByID(ctx context.Context, draftID string) error {
 }
 
 func (b *Bot) publishDraftContent(ctx context.Context, draft drafts.Draft) error {
-	if draft.PhotoFileID != "" {
-		_, err := b.tg.SendPhoto(ctx, b.cfg.ChannelID, draft.PhotoFileID, draft.Caption, draft.CaptionEntities, nil)
-		return err
-	}
-
-	_, err := b.tg.SendRichMessage(ctx, b.cfg.ChannelID, draft.Markdown, nil)
+	_, err := b.tg.SendRichMessage(ctx, b.cfg.ChannelID, draft.RichMessage, nil)
 	return err
 }
 
@@ -661,10 +671,22 @@ func publishErrorText(err error) string {
 	if description == "" {
 		return "Не удалось опубликовать из-за сетевой ошибки Telegram. Повтори попытку позже."
 	}
-	if strings.Contains(strings.ToLower(description), "chat not found") {
+	lower := strings.ToLower(description)
+	switch {
+	case strings.Contains(lower, "chat not found"):
 		return "Не удалось опубликовать: Telegram не нашёл целевой канал.\n\nПроверь TELEGRAM_CHANNEL_ID, username канала и что бот добавлен администратором канала с правом публикации."
+	case isCustomEmojiRestriction(lower):
+		return "Не удалось опубликовать: Telegram отклонил custom emoji.\n\n" +
+			"Для отправки custom emoji в канал боту может потребоваться дополнительный username, приобретённый через Fragment. " +
+			"Убери premium emoji или получи Fragment username для бота."
 	}
 	return "Не удалось опубликовать: " + description
+}
+
+// isCustomEmojiRestriction распознаёт ответы Telegram о запрете custom emoji.
+func isCustomEmojiRestriction(lowerDescription string) bool {
+	return strings.Contains(lowerDescription, "custom emoji") ||
+		strings.Contains(lowerDescription, "premium emoji")
 }
 
 func telegramErrorDescription(err error) string {
@@ -697,23 +719,6 @@ func photoScore(photo telegram.PhotoSize) int {
 		return photo.FileSize
 	}
 	return photo.Width * photo.Height
-}
-
-func markdownWithImage(markdown, imageURL string) string {
-	const imagePlaceholder = "{{image}}"
-
-	imageBlock := markdownImageBlock(imageURL)
-	if strings.Contains(markdown, imagePlaceholder) {
-		return strings.ReplaceAll(markdown, imagePlaceholder, imageBlock)
-	}
-	if strings.TrimSpace(markdown) == "" {
-		return imageBlock
-	}
-	return markdown + "\n\n" + imageBlock
-}
-
-func markdownImageBlock(imageURL string) string {
-	return "![](" + imageURL + ")"
 }
 
 func commandName(text string) string {

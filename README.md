@@ -1,18 +1,21 @@
 # Telegram Rich Markdown Publisher
 
-A single-binary Go Telegram bot that publishes rich Markdown posts and photo captions to a channel using Telegram Bot API. It runs via long polling, does not expose incoming ports, and deploys to a VPS as a static Linux binary managed by `systemd`.
+A single-binary Go Telegram bot that publishes rich Markdown posts and photos to a channel using the native **Rich Messages** of Telegram Bot API 10.2+. It runs via long polling, exposes no incoming ports, and deploys to a VPS as a static Linux binary managed by `systemd`.
 
 ## Features
 
 - Accepts messages only from a configured owner (`TELEGRAM_OWNER_ID`).
-- Renders a preview of the final post before publishing.
-- Publishes rich Markdown posts from Markdown protected in `md` code blocks.
+- Accepts posts created in Telegram's built-in Rich Markdown editor (`message.rich_message`) as the preferred way to create a post, preserving headings, lists, quotes, tables, code blocks, spoilers, custom emoji, and embedded media.
+- Publishes the same content (structure, formatting, media, custom emoji) to the configured channel.
+- Reuses media through Telegram `file_id` — no external storage and no re-upload.
+- Keeps the classic Markdown source protected inside an `md` fenced code block.
+- Renders a preview before publishing and offers immediate publish, scheduled publish, or cancel.
 - Schedules a preview for the nearest selected Moscow-time slot.
-- Publishes photos with captions as a single message via `sendPhoto` when image storage is not configured.
-- Converts a Telegram photo with a Markdown caption into a Rich Markdown media block when S3-compatible image storage is configured.
-- Explains image publishing with `/infoimage` and checks authenticated bucket access with `/checkstorage`.
+- Accepts a photo with a Markdown caption (with optional `{{image}}` placeholder) and builds one Rich Message using the Telegram `file_id`.
+- Accepts a captionless photo and returns a short alias reference (`![](tg://photo?id=...)`) to embed in a later Markdown post.
+- Supports premium/custom emoji; reports the channel restriction (Fragment username) explicitly without silently dropping the emoji.
 - Targets the channel configured in `TELEGRAM_CHANNEL_ID`.
-- Prevents duplicate drafts from being published twice.
+- Prevents a draft from being published twice.
 - Verifies the Telegram API with `getMe` before starting polling.
 - Writes structured JSON logs via `slog`.
 - Gracefully shuts down on `SIGINT` and `SIGTERM`.
@@ -41,69 +44,100 @@ Run locally:
 go run ./cmd/bot
 ```
 
-## Sending Markdown
+Only `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID`, `TELEGRAM_CHANNEL_ID`, and `LOG_LEVEL` are required. External S3-compatible storage (Yandex Object Storage / Cloudflare R2) is **no longer needed** — media is reused through the Telegram `file_id`.
 
-Telegram clients can render Markdown while composing a message and remove its source markers before the bot receives it. Send every Rich Markdown post inside one fenced code block with the language `md`; the bot uses only the block contents.
+## Native Rich Messages (recommended)
+
+Create a post directly in Telegram's built-in Rich Markdown editor, then send it to the bot. The bot reads the structured `message.rich_message`, preserves paragraphs, headings, bold/italic/underline/strikethrough, links, mentions, code and code blocks, quotes, lists, tables, dividers, expandable blocks, formulas, **custom emoji** (with their `custom_emoji_id` and alternative text), nested blocks, and embedded photo/video/animation/audio/voice-note media.
+
+The preview and the channel publication use the identical converted `InputRichMessage`, so what you preview is what gets published. Images and other media reuse the Telegram `file_id` — the bot never downloads or re-uploads them.
+
+If the bot receives a block type it does not yet support, it returns a clear message naming the unsupported type instead of panicking or silently dropping it.
+
+## Sending Markdown via `md` block
+
+Telegram clients render Markdown while composing and may strip its source markers before the bot receives it. Send a Rich Markdown post inside one fenced code block with the language `md`; the bot uses only the block contents.
 
 ````md
 ```md
 **Знакомьтесь: Рефералодав**
 
-![](https://example.com/image.jpg)
-
 Обычный текст с `кодом` и [гиперссылкой](https://example.com).
 ```
 ````
+
+### Custom emoji in Markdown
+
+Use the Rich Markdown custom-emoji syntax directly:
+
+```md
+![🔥](tg://emoji?id=5368324170671202286) огонь!
+```
+
+The bot does **not** convert or invent custom-emoji IDs; it passes your `tg://emoji?id=...` through to Telegram as-is.
+
+## Images via Telegram `file_id`
+
+There are three ways to include images, all using the Telegram `file_id` and `tg://photo?id=<alias>` links:
+
+1. **Photo without caption.** Send the bot a photo with no caption. It stores the `file_id` under a short alias (for example `photo_ab12cd34`) and replies with the line to embed:
+
+   ```md
+   ![](tg://photo?id=photo_ab12cd34)
+   ```
+
+   Place that line anywhere in a later Markdown post. `tg://video?id=...` and `tg://audio?id=...` references are also recognized.
+
+2. **Photo with a Markdown caption.** Send a photo whose caption is a single `md` fenced code block. Put `{{image}}` on its own line to choose where the image appears; without the placeholder, the image is appended after the caption. The bot builds one Rich Message using the photo's `file_id` under the alias `cover` — no download, no external URL.
+
+   ````md
+   ```md
+   # Post title
+
+   Introductory text.
+
+   {{image}}
+
+   Text below the image.
+   ```
+   ````
+
+3. **Native Rich Message.** Send a post from the built-in editor that already contains photo/video/animation/audio/voice-note blocks (including inside collage, slideshow, list, quote, or details). The bot preserves them all.
+
+### Notes on media aliases
+
+Aliases (`photo_ab12cd34`, `cover`, etc.) are short local identifiers (1–64 characters of `A-Z a-z 0-9 _ -`), **not** Telegram `file_id`s. They are stored in memory only. If an alias is lost after a restart, the bot refuses to send an invalid request and asks you to send the image again.
+
+## Custom emoji in channels
+
+Telegram allows custom emoji in private chats, groups, and supergroups when the bot owner has Telegram Premium. **For channel posts, the bot must have purchased an additional username on Fragment.** If publication to the channel is rejected because of a custom-emoji restriction, the bot:
+
+- does not mark the draft as published, so you can retry;
+- shows a clear message explaining the likely Fragment-username requirement;
+- records the original Telegram error in the structured log.
+
+Premium/custom emoji are never silently dropped or replaced with plain emoji.
 
 ## Scheduled Publishing
 
 The preview has an `Отправить потом` button. Choose one of the Moscow-time slots: `09:00`, `12:00`, `15:00`, `18:00`, or `21:00`. If the selected time has already passed, the post is scheduled for that time on the next day.
 
-Drafts and scheduled posts are stored in memory, so restart the bot only after scheduled posts have been published.
+Immediate and scheduled publication send the identical `InputRichMessage` content and media. A draft that was already published is never published again.
 
-## Images in Rich Markdown
+## In-memory state
 
-Use `/infoimage` in the bot for these instructions and `/checkstorage` to verify the endpoint, service account credentials, and bucket permissions without uploading an object.
+Drafts, media aliases, and scheduled posts are stored **in memory** and are lost when the bot restarts. Restart the bot only after scheduled posts have been published, and re-send any media whose alias was lost.
 
-Image storage is optional. Without it, a photo sent to the bot is published through `sendPhoto` with its Telegram caption.
+## Rich Message limits
 
-With S3-compatible storage configured, send the bot a photo with a caption inside an `md` code block. The bot downloads the photo from Telegram, uploads it to the configured bucket, and creates one Rich Markdown post using the public image URL. Put `{{image}}` on a separate line to choose where the image appears; without the placeholder, the image is appended after the caption.
+The bot validates the following limits before sending to Telegram:
 
-```md
-# Post title
-
-Introductory text.
-
-{{image}}
-
-Text below the image.
-```
-
-Telegram limits captions to 1,024 characters. For a longer post or several images, first send each image to the bot without a caption. It will reply with the Rich Markdown image block, which you can place anywhere in the final Markdown message:
-
-```md
-![](https://media.example.com/images/your-image.jpg)
-```
-
-Set up Yandex Object Storage:
-
-1. Create a Standard bucket, for example `telegram-post-images`. Use a name without dots so that its default HTTPS URL works without a custom certificate.
-2. In the bucket settings, enable public access only for **reading objects**. Do not enable listing objects or reading bucket settings.
-3. Create a service account, grant it `storage.editor` for this bucket, and create a static access key. Keep the secret key only in the server configuration.
-4. Add the credentials to `.env`, or to `/etc/telegram-publisher/env` on the VPS:
-
-```env
-MEDIA_S3_ENDPOINT=https://storage.yandexcloud.net
-MEDIA_S3_REGION=ru-central1
-MEDIA_S3_ACCESS_KEY_ID=
-MEDIA_S3_SECRET_ACCESS_KEY=
-MEDIA_S3_BUCKET=telegram-post-images
-MEDIA_S3_PUBLIC_BASE_URL=https://storage.yandexcloud.net/telegram-post-images
-```
-
-The generated object names are random and the links are permanent. Public read access is required so Telegram can fetch images when rendering the Markdown post. Do not use pre-signed URLs because they expire.
-
-The previous `R2_*` variables remain supported for Cloudflare R2. Do not set them together with `MEDIA_S3_*`.
+- up to 32 768 UTF-8 characters of rich text;
+- up to 500 blocks including nested blocks;
+- up to 16 nesting levels;
+- up to 50 media attachments;
+- up to 20 table columns;
+- media alias length 1–64 characters with the allowed character set.
 
 ## Build and Deploy
 
@@ -131,7 +165,7 @@ cmd/bot                # Application entry point
 internal/bot           # Message and callback handlers
 internal/config        # Environment and .env configuration
 internal/drafts        # In-memory draft store
-internal/objectstore   # S3-compatible image storage
+internal/rich          # Native Rich Message model, conversion, aliases, validation
 internal/telegram      # Telegram Bot API client
 scripts/               # Build, bootstrap, and deployment helpers
 ```
@@ -140,6 +174,9 @@ scripts/               # Build, bootstrap, and deployment helpers
 
 ```bash
 gofmt -w cmd internal
+go mod tidy
 go test ./...
+go test -race ./...
 go vet ./...
+golangci-lint run
 ```

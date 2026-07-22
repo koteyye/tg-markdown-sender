@@ -7,18 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/koteyye/tg-markdown-sender/internal/rich"
 )
 
 const defaultBaseURL = "https://api.telegram.org"
-
-const maxFileDownloadBytes = 10 << 20
 
 // Client выполняет запросы к Telegram Bot API.
 type Client struct {
@@ -82,67 +81,23 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, timeout int) ([]U
 	return updates, err
 }
 
-// DownloadFile скачивает файл с серверов Telegram по file_id.
-func (c *Client) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
-	values := url.Values{}
-	values.Set("file_id", fileID)
-
-	var file File
-	if err := c.do(ctx, http.MethodGet, "getFile", values, nil, &file); err != nil {
-		return nil, fmt.Errorf("get file: %w", err)
-	}
-	if file.FilePath == "" {
-		return nil, errors.New("getFile returned an empty file path")
+// SendRichMessage отправляет Rich Message в чат. Валидирует тело перед HTTP-запросом,
+// чтобы очевидно некорректное сообщение не отправлялось в Telegram.
+func (c *Client) SendRichMessage(ctx context.Context, chatID any, message rich.InputRichMessage, replyMarkup *ReplyMarkup) (*Message, error) {
+	if err := rich.Validate(message); err != nil {
+		return nil, fmt.Errorf("sendRichMessage: %w", err)
 	}
 
-	fileURL, err := url.JoinPath(c.baseURL, "file", "bot"+c.token, file.FilePath)
-	if err != nil {
-		return nil, fmt.Errorf("build file download url: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create file download request: %w", err)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, c.networkError("downloadFile", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("download file: unexpected HTTP status %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileDownloadBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read downloaded file: %w", err)
-	}
-	if len(data) > maxFileDownloadBytes {
-		return nil, fmt.Errorf("downloaded file exceeds %d MiB limit", maxFileDownloadBytes>>20)
-	}
-
-	return data, nil
-}
-
-// SendRichMessage отправляет форматированное Markdown-сообщение.
-func (c *Client) SendRichMessage(ctx context.Context, chatID any, markdown string, replyMarkup *ReplyMarkup) (*Message, error) {
-	var message Message
+	var result Message
 	body := SendRichMessageRequest{
 		ChatID:      chatID,
-		RichMessage: RichMessage{Markdown: markdown},
+		RichMessage: message,
 		ReplyMarkup: replyMarkup,
 	}
-	if err := c.do(ctx, http.MethodPost, "sendRichMessage", nil, body, &message); err != nil {
+	if err := c.do(ctx, http.MethodPost, "sendRichMessage", nil, body, &result); err != nil {
 		return nil, err
 	}
-	return &message, nil
+	return &result, nil
 }
 
 // SendMessage отправляет обычное текстовое сообщение.
@@ -154,22 +109,6 @@ func (c *Client) SendMessage(ctx context.Context, chatID any, text string, reply
 		ReplyMarkup: replyMarkup,
 	}
 	if err := c.do(ctx, http.MethodPost, "sendMessage", nil, body, &message); err != nil {
-		return nil, err
-	}
-	return &message, nil
-}
-
-// SendPhoto отправляет фото с подписью.
-func (c *Client) SendPhoto(ctx context.Context, chatID any, photoFileID, caption string, captionEntities []MessageEntity, replyMarkup *ReplyMarkup) (*Message, error) {
-	var message Message
-	body := SendPhotoRequest{
-		ChatID:          chatID,
-		Photo:           photoFileID,
-		Caption:         caption,
-		CaptionEntities: captionEntities,
-		ReplyMarkup:     replyMarkup,
-	}
-	if err := c.do(ctx, http.MethodPost, "sendPhoto", nil, body, &message); err != nil {
 		return nil, err
 	}
 	return &message, nil

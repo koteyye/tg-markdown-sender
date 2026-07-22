@@ -7,28 +7,15 @@ import (
 )
 
 const (
-	envToken         = "TELEGRAM_BOT_TOKEN"
-	envOwner         = "TELEGRAM_OWNER_ID"
-	envChannel       = "TELEGRAM_CHANNEL_ID"
-	envS3Endpoint    = "MEDIA_S3_ENDPOINT"
-	envS3Region      = "MEDIA_S3_REGION"
-	envS3Access      = "MEDIA_S3_ACCESS_KEY_ID"
-	envS3KeyMaterial = "MEDIA_S3_SECRET_ACCESS_KEY"
-	envS3Bucket      = "MEDIA_S3_BUCKET"
-	envS3PublicURL   = "MEDIA_S3_PUBLIC_BASE_URL"
-	envR2Account     = "R2_ACCOUNT_ID"
-	envR2Access      = "R2_ACCESS_KEY_ID"
-	envR2KeyMaterial = "R2_SECRET_ACCESS_KEY"
-	envR2Bucket      = "R2_BUCKET"
-	envR2PublicURL   = "R2_PUBLIC_BASE_URL"
+	envToken      = "TELEGRAM_BOT_TOKEN"
+	envOwner      = "TELEGRAM_OWNER_ID"
+	envChannel    = "TELEGRAM_CHANNEL_ID"
+	envS3Endpoint = "MEDIA_S3_ENDPOINT"
+	envR2Account  = "R2_ACCOUNT_ID"
 
-	testBotToken    = "tok"
-	testOwnerID     = "42"
-	testChannelID   = "@ch"
-	testAccessKey   = "access-key"
-	testKeyMaterial = "secret-key"
-	testBucketName  = "post-images"
-	testAccountID   = "account"
+	testBotToken  = "tok"
+	testOwnerID   = "42"
+	testChannelID = "@ch"
 )
 
 //nolint:paralleltest // The test changes process-wide environment variables and working directory.
@@ -87,108 +74,21 @@ func TestLoadBasicConfiguration(t *testing.T) {
 }
 
 //nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadYandexObjectStorageConfiguration(t *testing.T) {
-	setupConfigTest(t)
-
-	env := baseEnv()
-	env[envS3Endpoint] = "https://storage.yandexcloud.net/"
-	env[envS3Region] = "ru-central1"
-	env[envS3Access] = testAccessKey
-	env[envS3KeyMaterial] = testKeyMaterial
-	env[envS3Bucket] = testBucketName
-	env[envS3PublicURL] = "https://storage.yandexcloud.net/post-images/"
-
-	cfg, err := loadWithEnv(t, env)
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	want := Config{
-		BotToken:  testBotToken,
-		OwnerID:   42,
-		ChannelID: testChannelID,
-		Media: MediaConfig{
-			Endpoint:      "https://storage.yandexcloud.net",
-			Region:        "ru-central1",
-			AccessKeyID:   testAccessKey,
-			SecretKey:     testKeyMaterial,
-			Bucket:        testBucketName,
-			PublicBaseURL: "https://storage.yandexcloud.net/post-images",
-		},
-	}
-	if cfg != want {
-		t.Fatalf("unexpected config: %+v, want %+v", cfg, want)
-	}
-}
-
-//nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadLegacyR2Configuration(t *testing.T) {
-	setupConfigTest(t)
-
-	env := baseEnv()
-	env[envR2Account] = testAccountID
-	env[envR2Access] = testAccessKey
-	env[envR2KeyMaterial] = testKeyMaterial
-	env[envR2Bucket] = testBucketName
-	env[envR2PublicURL] = "https://media.example.com/"
-
-	cfg, err := loadWithEnv(t, env)
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	want := Config{
-		BotToken:  testBotToken,
-		OwnerID:   42,
-		ChannelID: testChannelID,
-		Media: MediaConfig{
-			Endpoint:      "https://account.r2.cloudflarestorage.com",
-			Region:        "auto",
-			AccessKeyID:   testAccessKey,
-			SecretKey:     testKeyMaterial,
-			Bucket:        testBucketName,
-			PublicBaseURL: "https://media.example.com",
-		},
-	}
-	if cfg != want {
-		t.Fatalf("unexpected config: %+v, want %+v", cfg, want)
-	}
-}
-
-//nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadRejectsPartialS3Configuration(t *testing.T) {
+func TestLoadIgnoresLegacyS3AndR2Variables(t *testing.T) {
 	setupConfigTest(t)
 
 	env := baseEnv()
 	env[envS3Endpoint] = "https://storage.yandexcloud.net"
-	requireLoadError(t, env, envS3Region)
-}
+	env[envR2Account] = "account"
 
-//nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadRejectsPartialR2Configuration(t *testing.T) {
-	setupConfigTest(t)
-
-	env := baseEnv()
-	env[envR2Account] = testAccountID
-	requireLoadError(t, env, envR2Access)
-}
-
-//nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadRejectsMixedS3AndR2Configuration(t *testing.T) {
-	setupConfigTest(t)
-
-	env := baseEnv()
-	addS3Config(env)
-	addR2Config(env)
-	requireLoadError(t, env, "MEDIA_S3_*")
-}
-
-//nolint:paralleltest // The test changes process-wide environment variables and working directory.
-func TestLoadRejectsInsecureR2PublicURL(t *testing.T) {
-	setupConfigTest(t)
-
-	env := baseEnv()
-	addR2Config(env)
-	env[envR2PublicURL] = "http://media.example.com"
-	requireLoadError(t, env, envR2PublicURL)
+	cfg, err := loadWithEnv(t, env)
+	if err != nil {
+		t.Fatalf("legacy variables must not cause a load error: %v", err)
+	}
+	want := Config{BotToken: testBotToken, OwnerID: 42, ChannelID: testChannelID}
+	if cfg != want {
+		t.Fatalf("legacy variables must be ignored: got %+v, want %+v", cfg, want)
+	}
 }
 
 //nolint:paralleltest // The test changes process-wide environment variables and working directory.
@@ -238,14 +138,6 @@ func loadWithEnv(t *testing.T, env map[string]string) (Config, error) {
 	return Load()
 }
 
-func requireLoadError(t *testing.T, env map[string]string, want string) {
-	t.Helper()
-	_, err := loadWithEnv(t, env)
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("Load() error = %v, want error containing %q", err, want)
-	}
-}
-
 func baseEnv() map[string]string {
 	return map[string]string{
 		envToken:   testBotToken,
@@ -254,38 +146,12 @@ func baseEnv() map[string]string {
 	}
 }
 
-func addS3Config(env map[string]string) {
-	env[envS3Endpoint] = "https://storage.yandexcloud.net"
-	env[envS3Region] = "ru-central1"
-	env[envS3Access] = testAccessKey
-	env[envS3KeyMaterial] = testKeyMaterial
-	env[envS3Bucket] = testBucketName
-	env[envS3PublicURL] = "https://storage.yandexcloud.net/post-images"
-}
-
-func addR2Config(env map[string]string) {
-	env[envR2Account] = testAccountID
-	env[envR2Access] = "legacy-access-key"
-	env[envR2KeyMaterial] = "legacy-key-material"
-	env[envR2Bucket] = "legacy-post-images"
-	env[envR2PublicURL] = "https://media.example.com"
-}
-
 func allConfigEnvKeys() []string {
 	return []string{
 		envToken,
 		envOwner,
 		envChannel,
 		envS3Endpoint,
-		envS3Region,
-		envS3Access,
-		envS3KeyMaterial,
-		envS3Bucket,
-		envS3PublicURL,
 		envR2Account,
-		envR2Access,
-		envR2KeyMaterial,
-		envR2Bucket,
-		envR2PublicURL,
 	}
 }

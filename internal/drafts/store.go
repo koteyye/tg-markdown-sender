@@ -18,22 +18,18 @@ var (
 	ErrAlreadyPublished = errors.New("draft already published")
 )
 
-// Draft представляет черновик поста: текстовый или фото с подписью.
+// Draft представляет черновик Rich Message поста.
 type Draft struct {
-	ID              string
-	Markdown        string
-	PhotoFileID     string
-	Caption         string
-	CaptionEntities []telegram.MessageEntity
-	Published       bool
-	CreatedAt       time.Time
-	PublishedAt     *time.Time
+	ID          string
+	RichMessage telegram.InputRichMessage
+	Published   bool
+	CreatedAt   time.Time
+	PublishedAt *time.Time
 }
 
 // Store описывает операции с черновиками постов.
 type Store interface {
-	Create(markdown string) (Draft, error)
-	CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error)
+	Create(richMessage telegram.InputRichMessage) (Draft, error)
 	Get(id string) (Draft, bool)
 	Delete(id string)
 	MarkPublished(id string) (Draft, error)
@@ -50,28 +46,18 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{drafts: make(map[string]Draft)}
 }
 
-// Create создаёт текстовый черновик Markdown-поста.
-func (s *MemoryStore) Create(markdown string) (Draft, error) {
-	return s.create(Draft{Markdown: markdown})
-}
-
-// CreatePhoto создаёт черновик поста с фото и подписью.
-func (s *MemoryStore) CreatePhoto(photoFileID, caption string, captionEntities []telegram.MessageEntity) (Draft, error) {
-	return s.create(Draft{
-		PhotoFileID:     photoFileID,
-		Caption:         caption,
-		CaptionEntities: append([]telegram.MessageEntity(nil), captionEntities...),
-	})
-}
-
-func (s *MemoryStore) create(draft Draft) (Draft, error) {
+// Create создаёт черновик Rich Message поста.
+func (s *MemoryStore) Create(richMessage telegram.InputRichMessage) (Draft, error) {
 	id, err := randomID()
 	if err != nil {
 		return Draft{}, err
 	}
 
-	draft.ID = id
-	draft.CreatedAt = time.Now().UTC()
+	draft := Draft{
+		ID:          id,
+		RichMessage: richMessage,
+		CreatedAt:   time.Now().UTC(),
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

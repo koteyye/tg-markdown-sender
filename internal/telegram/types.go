@@ -1,5 +1,14 @@
 package telegram
 
+import "github.com/koteyye/tg-markdown-sender/internal/rich"
+
+//nolint:revive // группа алиасов позволяет остальному коду зависеть только от пакета telegram.
+type (
+	InputRichMessage      = rich.InputRichMessage
+	InputRichMessageMedia = rich.InputRichMessageMedia
+	InputMedia            = rich.InputMedia
+)
+
 // Update представляет одно входящее обновление из Telegram.
 type Update struct {
 	UpdateID      int64          `json:"update_id"`
@@ -9,14 +18,15 @@ type Update struct {
 
 // Message представляет сообщение, полученное от Telegram.
 type Message struct {
-	MessageID       int64           `json:"message_id"`
-	From            *User           `json:"from,omitempty"`
-	Chat            Chat            `json:"chat"`
-	Text            string          `json:"text,omitempty"`
-	Entities        []MessageEntity `json:"entities,omitempty"`
-	Caption         string          `json:"caption,omitempty"`
-	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
-	Photo           []PhotoSize     `json:"photo,omitempty"`
+	MessageID       int64             `json:"message_id"`
+	From            *User             `json:"from,omitempty"`
+	Chat            Chat              `json:"chat"`
+	Text            string            `json:"text,omitempty"`
+	Entities        []MessageEntity   `json:"entities,omitempty"`
+	Caption         string            `json:"caption,omitempty"`
+	CaptionEntities []MessageEntity   `json:"caption_entities,omitempty"`
+	Photo           []PhotoSize       `json:"photo,omitempty"`
+	RichMessage     *rich.RichMessage `json:"rich_message,omitempty"`
 }
 
 // MessageEntity описывает entity форматирования внутри сообщения.
@@ -35,14 +45,6 @@ type PhotoSize struct {
 	Width        int    `json:"width"`
 	Height       int    `json:"height"`
 	FileSize     int    `json:"file_size,omitempty"`
-}
-
-// File описывает файл, доступный для скачивания через Telegram Bot API.
-type File struct {
-	FileID       string `json:"file_id"`
-	FileUniqueID string `json:"file_unique_id,omitempty"`
-	FileSize     int    `json:"file_size,omitempty"`
-	FilePath     string `json:"file_path,omitempty"`
 }
 
 // User представляет информацию о пользователе Telegram.
@@ -90,16 +92,11 @@ type InlineKeyboardButton struct {
 	CallbackData string `json:"callback_data"`
 }
 
-// RichMessage представляет тело Rich Markdown сообщения.
-type RichMessage struct {
-	Markdown string `json:"markdown"`
-}
-
 // SendRichMessageRequest — тело запроса sendRichMessage.
 type SendRichMessageRequest struct {
-	ChatID      any          `json:"chat_id"`
-	RichMessage RichMessage  `json:"rich_message"`
-	ReplyMarkup *ReplyMarkup `json:"reply_markup,omitempty"`
+	ChatID      any                   `json:"chat_id"`
+	RichMessage rich.InputRichMessage `json:"rich_message"`
+	ReplyMarkup *ReplyMarkup          `json:"reply_markup,omitempty"`
 }
 
 // SendMessageRequest — тело запроса sendMessage.
@@ -107,15 +104,6 @@ type SendMessageRequest struct {
 	ChatID      any          `json:"chat_id"`
 	Text        string       `json:"text"`
 	ReplyMarkup *ReplyMarkup `json:"reply_markup,omitempty"`
-}
-
-// SendPhotoRequest — тело запроса sendPhoto.
-type SendPhotoRequest struct {
-	ChatID          any             `json:"chat_id"`
-	Photo           string          `json:"photo"`
-	Caption         string          `json:"caption,omitempty"`
-	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
-	ReplyMarkup     *ReplyMarkup    `json:"reply_markup,omitempty"`
 }
 
 // AnswerCallbackQueryRequest — тело запроса answerCallbackQuery.

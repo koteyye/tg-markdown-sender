@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/koteyye/tg-markdown-sender/internal/rich"
 )
 
 type handlerCheck struct {
@@ -49,17 +51,41 @@ func TestSendRichMessageSuccess(t *testing.T) {
 			if req.RichMessage.Markdown != "# Title" {
 				return errors.New("unexpected markdown: " + req.RichMessage.Markdown)
 			}
+			if len(req.RichMessage.Media) != 1 || req.RichMessage.Media[0].ID != "cover" {
+				return errors.New("unexpected media")
+			}
 			return nil
 		},
 		respondWith: []byte(`{"ok":true,"result":{"message_id":10,"chat":{"id":42,"type":"private"}}}`),
 	})
 
-	msg, err := client.SendRichMessage(context.Background(), int64(42), "# Title", nil)
+	msg, err := client.SendRichMessage(context.Background(), int64(42), InputRichMessage{
+		Markdown: "# Title",
+		Media: []rich.InputRichMessageMedia{
+			{ID: "cover", Media: rich.NewPhotoMedia("file-id")},
+		},
+	}, nil)
 	if err != nil {
 		t.Fatalf("SendRichMessage returned error: %v", err)
 	}
 	if msg.MessageID != 10 {
 		t.Fatalf("unexpected message id: %d", msg.MessageID)
+	}
+}
+
+func TestSendRichMessageRejectsInvalidBodyBeforeRequest(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("request must not be sent for an invalid rich message")
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
+
+	_, err := client.SendRichMessage(context.Background(), int64(42), InputRichMessage{}, nil)
+	if err == nil {
+		t.Fatal("expected validation error for empty rich message")
 	}
 }
 
@@ -172,7 +198,7 @@ func TestSendRichMessageAPIError(t *testing.T) {
 
 	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
 
-	_, err := client.SendRichMessage(context.Background(), "@channel", "*broken", nil)
+	_, err := client.SendRichMessage(context.Background(), "@channel", InputRichMessage{Markdown: "*broken"}, nil)
 	if err == nil {
 		t.Fatal("expected API error")
 	}
@@ -217,81 +243,29 @@ func TestDoRetriesOnServerError(t *testing.T) {
 	}
 }
 
-func TestSendPhotoSuccess(t *testing.T) {
+func TestGetUpdatesDecodesRichMessage(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/botsecret/sendPhoto") {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-
-		var req SendPhotoRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		if req.Photo != "photo-file-id" {
-			t.Fatalf("unexpected photo: %q", req.Photo)
-		}
-		if req.Caption != "hello" {
-			t.Fatalf("unexpected caption: %q", req.Caption)
-		}
-		if len(req.CaptionEntities) != 1 || req.CaptionEntities[0].Type != "bold" {
-			t.Fatalf("unexpected caption entities: %#v", req.CaptionEntities)
-		}
-		if req.ReplyMarkup == nil {
-			t.Fatal("reply markup must be sent")
-		}
-
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":11,"chat":{"id":42,"type":"private"},"caption":"hello"}}`))
-	}))
-	defer server.Close()
-
-	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
-
-	msg, err := client.SendPhoto(
-		context.Background(),
-		int64(42),
-		"photo-file-id",
-		"hello",
-		[]MessageEntity{{Type: "bold", Offset: 0, Length: 5}},
-		&ReplyMarkup{InlineKeyboard: [][]InlineKeyboardButton{{{Text: "ok", CallbackData: "ok"}}}},
-	)
-	if err != nil {
-		t.Fatalf("SendPhoto returned error: %v", err)
-	}
-	if msg.MessageID != 11 {
-		t.Fatalf("unexpected message id: %d", msg.MessageID)
-	}
-}
-
-func TestDownloadFileSuccess(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/botsecret/getFile":
-			if r.URL.Query().Get("file_id") != "photo-file-id" {
-				t.Fatalf("unexpected file id: %q", r.URL.Query().Get("file_id"))
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"ok":true,"result":{"file_id":"photo-file-id","file_path":"photos/image.jpg"}}`))
-		case "/file/botsecret/photos/image.jpg":
-			w.Header().Set("Content-Type", "image/jpeg")
-			_, _ = w.Write([]byte("image-bytes"))
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":1,"message":{"message_id":1,"chat":{"id":42},"rich_message":{"is_rtl":false,"blocks":[{"type":"paragraph","text":"Hello"}]}}}]}`))
 	}))
 	t.Cleanup(server.Close)
 
 	client := NewClient("secret", server.Client(), testLogger(), WithBaseURL(server.URL))
-	data, err := client.DownloadFile(context.Background(), "photo-file-id")
+	updates, err := client.GetUpdates(context.Background(), 0, 50)
 	if err != nil {
-		t.Fatalf("DownloadFile returned error: %v", err)
+		t.Fatalf("GetUpdates returned error: %v", err)
 	}
-	if string(data) != "image-bytes" {
-		t.Fatalf("unexpected downloaded data: %q", data)
+	if len(updates) != 1 {
+		t.Fatalf("expected one update, got %d", len(updates))
+	}
+	msg := updates[0].Message
+	if msg == nil || msg.RichMessage == nil {
+		t.Fatal("rich_message not decoded")
+	}
+	if len(msg.RichMessage.Blocks) != 1 || msg.RichMessage.Blocks[0].Type != "paragraph" {
+		t.Fatalf("unexpected blocks: %#v", msg.RichMessage.Blocks)
 	}
 }
 
